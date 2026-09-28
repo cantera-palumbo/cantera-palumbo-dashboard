@@ -287,6 +287,17 @@ async function llamarScript(accion, datos){
   return res.json();
 }
 
+// Los datos llegan comprimidos (gzip en base64, ver doGet en Acceso.gs).
+// Los errores llegan como JSON común, sin comprimir.
+async function leerDatosComprimidos(texto){
+  texto = texto.trim();
+  if(texto.startsWith("{")) return JSON.parse(texto);
+  const binario = atob(texto), bytes = new Uint8Array(binario.length);
+  for(let i = 0; i < binario.length; i++) bytes[i] = binario.charCodeAt(i);
+  const flujo = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
+  return JSON.parse(await new Response(flujo).text());
+}
+
 function loginMensaje(texto, esError){
   const el = document.getElementById("loginMsg");
   el.textContent = texto || "";
@@ -1190,7 +1201,7 @@ async function cargar(){
     if(t.error) throw new Error(t.error);
     const res = await fetch(SCRIPT_URL + "?ticket=" + encodeURIComponent(t.ticket));
     if(!res.ok) throw new Error("HTTP "+res.status);
-    const data = await res.json();
+    const data = await leerDatosComprimidos(await res.text());
     if(data.error) throw new Error(data.error);
     document.body.classList.remove("sin-sesion");
     document.getElementById("usuarioEmail").textContent = data.usuario || "";
