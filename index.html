@@ -1183,8 +1183,14 @@ async function cargar(){
   const token = leerSesion();
   if(!token){ mostrarLogin(); return; }
   try{
-    const data = await llamarScript("datos", {token});
-    if(data.error === "sesion"){ borrarSesion(); mostrarLogin("Tu sesión venció o se cerró. Ingresá de nuevo."); return; }
+    // Paso 1: con el pase de sesión se pide un ticket de carga de pocos minutos.
+    // Paso 2: con ese ticket se bajan los datos por GET (ver doGet en Acceso.gs).
+    const t = await llamarScript("ticket", {token});
+    if(t.error === "sesion"){ borrarSesion(); mostrarLogin("Tu sesión venció o se cerró. Ingresá de nuevo."); return; }
+    if(t.error) throw new Error(t.error);
+    const res = await fetch(SCRIPT_URL + "?ticket=" + encodeURIComponent(t.ticket));
+    if(!res.ok) throw new Error("HTTP "+res.status);
+    const data = await res.json();
     if(data.error) throw new Error(data.error);
     document.body.classList.remove("sin-sesion");
     document.getElementById("usuarioEmail").textContent = data.usuario || "";
