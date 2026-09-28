@@ -186,6 +186,21 @@
   .estado.error{color:#8a3b2c;}
   footer{max-width:1140px; margin:0 auto; padding:0 clamp(20px,5vw,56px); font-size:11.5px; color:#8f8c7e;}
 
+  body.sin-sesion .tabs, body.sin-sesion .topbar__acciones, body.sin-sesion .topbar__meta{display:none;}
+  .login{max-width:400px; margin:48px auto 0; background:#fff; border:1px solid var(--linea); border-radius:8px; padding:32px 28px; box-shadow:var(--sombra-chica);}
+  .login h2{font-size:20px; font-weight:800; margin-bottom:6px;}
+  .login p{font-size:13.5px; color:var(--texto-sec); margin-bottom:18px; line-height:1.45;}
+  .login label{display:block; font-size:12px; font-weight:600; margin-bottom:6px;}
+  .login input{width:100%; font:inherit; font-size:15px; padding:11px 12px; border:1px solid var(--linea); border-radius:6px; margin-bottom:14px;}
+  .login input:focus{outline:2px solid var(--verde-claro); border-color:var(--verde);}
+  .login button{width:100%; padding:12px; border:0; border-radius:6px; background:var(--verde); color:#fff; font-size:15px; font-weight:700;}
+  .login button:disabled{opacity:.6; cursor:wait;}
+  .login .login__link{background:none; color:var(--verde-oscuro); font-size:13px; font-weight:600; padding:10px 0 0; text-decoration:underline;}
+  .login__msg{font-size:13px; margin-top:12px; min-height:18px; color:var(--texto-sec);}
+  .login__msg.error{color:#8a3b2c;}
+  .topbar__usuario{font-size:12px; color:#a9a79c; text-align:right;}
+  .topbar__usuario button{background:none; border:0; color:var(--crema); text-decoration:underline; font-size:12px; margin-left:6px;}
+
   #imprimirInforme{display:none;}
   body.modo-informe > *:not(#imprimirInforme){display:none !important;}
   body.modo-informe #imprimirInforme{display:block !important; padding:20px;}
@@ -214,6 +229,7 @@
         <button class="btn-descarga" onclick="descargarInformePDF()">⭳ Informe completo (PDF)</button>
       </div>
       <div class="topbar__meta">Última actualización<br><strong id="actualizado">—</strong></div>
+      <div class="topbar__usuario" id="usuario" style="display:none;"><span id="usuarioEmail"></span><button onclick="salir()">Salir</button></div>
     </div>
   </div>
   <div class="tabs">
@@ -225,6 +241,24 @@
 </div>
 
 <main>
+  <div id="login" class="login" style="display:none;">
+    <form id="loginPaso1">
+      <h2>Ingresar al Panel</h2>
+      <p>Escribí tu mail y te mandamos un código de 6 dígitos para entrar.</p>
+      <label for="loginEmail">Mail</label>
+      <input type="email" id="loginEmail" autocomplete="email" required>
+      <button type="submit">Enviarme el código</button>
+    </form>
+    <form id="loginPaso2" style="display:none;">
+      <h2>Revisá tu mail</h2>
+      <p id="loginPaso2Texto"></p>
+      <label for="loginCodigo">Código</label>
+      <input type="text" id="loginCodigo" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" required>
+      <button type="submit">Entrar</button>
+      <button type="button" class="login__link" onclick="volverAPaso1()">Usar otro mail / pedir otro código</button>
+    </form>
+    <div class="login__msg" id="loginMsg"></div>
+  </div>
   <div id="contenido">
     <div class="estado" id="cargando">Cargando datos desde la Base…</div>
   </div>
@@ -235,7 +269,89 @@
 <div id="imprimirInforme"></div>
 
 <script>
-const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwhPd5cYOr_YLlpc_ped7i6BSNb2Nq06F4k1Se8fE2ru4d7zUAdHbJ7aw0doFZySW67/exec";
+// URL de la implementación NUEVA del Apps Script (la vieja ya no entrega datos).
+// No es secreta: sin un pase de sesión válido el script no devuelve nada.
+const SCRIPT_URL = "https://script.google.com/macros/s/AKfycby28gIf-mX4BYCF9TvwXg-DwaPHodIRvOCg8nTA9MDnmBb1AERLHLSrHMPqBab2hcjx/exec";
+
+// ================= ACCESO (código por mail) =================
+const CLAVE_SESION = "palumbo_panel_sesion";
+function leerSesion(){ try{ return localStorage.getItem(CLAVE_SESION); }catch(e){ return null; } }
+function guardarSesion(t){ try{ localStorage.setItem(CLAVE_SESION, t); }catch(e){} }
+function borrarSesion(){ try{ localStorage.removeItem(CLAVE_SESION); }catch(e){} }
+
+// Sin header Content-Type el body viaja como text/plain: así el navegador no hace
+// el pedido previo (CORS preflight) que Apps Script no sabe responder.
+async function llamarScript(accion, datos){
+  const res = await fetch(SCRIPT_URL, {method:"POST", body: JSON.stringify(Object.assign({accion}, datos || {}))});
+  if(!res.ok) throw new Error("HTTP "+res.status);
+  return res.json();
+}
+
+function loginMensaje(texto, esError){
+  const el = document.getElementById("loginMsg");
+  el.textContent = texto || "";
+  el.className = "login__msg" + (esError ? " error" : "");
+}
+
+function mostrarLogin(mensaje){
+  document.body.classList.add("sin-sesion");
+  document.getElementById("usuario").style.display = "none";
+  document.getElementById("pie").style.display = "none";
+  document.getElementById("contenido").innerHTML = "";
+  document.getElementById("login").style.display = "block";
+  volverAPaso1();
+  loginMensaje(mensaje, false);
+  document.getElementById("loginEmail").focus();
+}
+
+function volverAPaso1(){
+  document.getElementById("loginPaso1").style.display = "block";
+  document.getElementById("loginPaso2").style.display = "none";
+  document.getElementById("loginCodigo").value = "";
+  loginMensaje("");
+}
+
+document.getElementById("loginPaso1").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const boton = ev.target.querySelector("button");
+  const email = document.getElementById("loginEmail").value.trim();
+  boton.disabled = true; loginMensaje("Enviando…");
+  try{
+    const r = await llamarScript("pedirCodigo", {email});
+    if(r.error){ loginMensaje(r.error, true); return; }
+    document.getElementById("loginPaso1").style.display = "none";
+    document.getElementById("loginPaso2").style.display = "block";
+    document.getElementById("loginPaso2Texto").textContent = r.mensaje + " (" + email + ")";
+    loginMensaje("");
+    document.getElementById("loginCodigo").focus();
+  }catch(err){ loginMensaje("No se pudo conectar ("+err.message+"). Probá de nuevo.", true); }
+  finally{ boton.disabled = false; }
+});
+
+document.getElementById("loginPaso2").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const boton = ev.target.querySelector("button[type=submit]");
+  boton.disabled = true; loginMensaje("Verificando…");
+  try{
+    const r = await llamarScript("verificarCodigo", {
+      email: document.getElementById("loginEmail").value.trim(),
+      codigo: document.getElementById("loginCodigo").value.trim()
+    });
+    if(r.error){ loginMensaje(r.error, true); return; }
+    guardarSesion(r.token);
+    document.getElementById("login").style.display = "none";
+    document.getElementById("contenido").innerHTML = `<div class="estado" id="cargando">Cargando datos desde la Base…</div>`;
+    cargar();
+  }catch(err){ loginMensaje("No se pudo conectar ("+err.message+"). Probá de nuevo.", true); }
+  finally{ boton.disabled = false; }
+});
+
+async function salir(){
+  const token = leerSesion();
+  borrarSesion();
+  try{ if(token) await llamarScript("salir", {token}); }catch(e){}
+  mostrarLogin("Cerraste sesión.");
+}
 const MESES = ["","Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
 const MESES_LARGO = ["","enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"];
 const DIAS = ["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
@@ -1064,10 +1180,15 @@ function buscarCliente(nombreExacto){
 
 // ================= CARGA INICIAL =================
 async function cargar(){
+  const token = leerSesion();
+  if(!token){ mostrarLogin(); return; }
   try{
-    const res = await fetch(SCRIPT_URL, {method:"GET"});
-    if(!res.ok) throw new Error("HTTP "+res.status);
-    const data = await res.json();
+    const data = await llamarScript("datos", {token});
+    if(data.error === "sesion"){ borrarSesion(); mostrarLogin("Tu sesión venció o se cerró. Ingresá de nuevo."); return; }
+    if(data.error) throw new Error(data.error);
+    document.body.classList.remove("sin-sesion");
+    document.getElementById("usuarioEmail").textContent = data.usuario || "";
+    document.getElementById("usuario").style.display = "block";
     LINEAS = data.lineas || [];
     COMISION = data.comision || [];
     GANADO = data.ganadoSinPedido || [];
