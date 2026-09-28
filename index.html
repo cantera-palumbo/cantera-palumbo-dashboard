@@ -275,6 +275,7 @@ const SCRIPT_URL = "https://script.google.com/macros/s/AKfycby28gIf-mX4BYCF9TvwX
 
 // ================= ACCESO (código por mail) =================
 const CLAVE_SESION = "palumbo_panel_sesion";
+const TAMANO_PARTE = 60000; // caracteres por parte al bajar los datos (ver prepararDatos en Acceso.gs)
 function leerSesion(){ try{ return localStorage.getItem(CLAVE_SESION); }catch(e){ return null; } }
 function guardarSesion(t){ try{ localStorage.setItem(CLAVE_SESION, t); }catch(e){} }
 function borrarSesion(){ try{ localStorage.removeItem(CLAVE_SESION); }catch(e){} }
@@ -1194,14 +1195,22 @@ async function cargar(){
   const token = leerSesion();
   if(!token){ mostrarLogin(); return; }
   try{
-    // Paso 1: con el pase de sesión se pide un ticket de carga de pocos minutos.
-    // Paso 2: con ese ticket se bajan los datos por GET (ver doGet en Acceso.gs).
-    const t = await llamarScript("ticket", {token});
-    if(t.error === "sesion"){ borrarSesion(); mostrarLogin("Tu sesión venció o se cerró. Ingresá de nuevo."); return; }
-    if(t.error) throw new Error(t.error);
-    const res = await fetch(SCRIPT_URL + "?ticket=" + encodeURIComponent(t.ticket));
-    if(!res.ok) throw new Error("HTTP "+res.status);
-    const data = await leerDatosComprimidos(await res.text());
+    // Google no entrega respuestas grandes: el script prepara los datos comprimidos y
+    // los manda en partes chicas, que se piden de a una (ver prepararDatos en Acceso.gs).
+    const prep = await llamarScript("preparar", {token, tamano: TAMANO_PARTE});
+    if(prep.error === "sesion"){ borrarSesion(); mostrarLogin("Tu sesión venció o se cerró. Ingresá de nuevo."); return; }
+    if(prep.error) throw new Error(prep.error);
+    let comprimido = "";
+    for(let i = 0; i < prep.partes; i++){
+      const cartel = document.getElementById("cargando");
+      if(cartel) cartel.textContent = `Cargando datos desde la Base… (${i+1} de ${prep.partes})`;
+      let r;
+      try{ r = await llamarScript("parte", {token, id: prep.id, i}); }
+      catch(e){ r = await llamarScript("parte", {token, id: prep.id, i}); } // un reintento
+      if(r.error) throw new Error(r.error);
+      comprimido += r.parte;
+    }
+    const data = await leerDatosComprimidos(comprimido);
     if(data.error) throw new Error(data.error);
     document.body.classList.remove("sin-sesion");
     document.getElementById("usuarioEmail").textContent = data.usuario || "";
