@@ -299,6 +299,18 @@ async function leerDatosComprimidos(texto){
   return JSON.parse(await new Response(flujo).text());
 }
 
+// Google a veces devuelve un 404 suelto en una app web (sobre todo con pedidos en paralelo,
+// por ejemplo el Panel abierto en dos pestañas). Se reintenta con esperas crecientes.
+async function conReintentos(fn, intentos = 4){
+  for(let n = 1; ; n++){
+    try{ return await fn(); }
+    catch(err){
+      if(n >= intentos) throw err;
+      await new Promise(r => setTimeout(r, 1500 * n));
+    }
+  }
+}
+
 function loginMensaje(texto, esError){
   const el = document.getElementById("loginMsg");
   el.textContent = texto || "";
@@ -1197,16 +1209,14 @@ async function cargar(){
   try{
     // Google no entrega respuestas grandes: el script prepara los datos comprimidos y
     // los manda en partes chicas, que se piden de a una (ver prepararDatos en Acceso.gs).
-    const prep = await llamarScript("preparar", {token, tamano: TAMANO_PARTE});
+    const prep = await conReintentos(() => llamarScript("preparar", {token, tamano: TAMANO_PARTE}));
     if(prep.error === "sesion"){ borrarSesion(); mostrarLogin("Tu sesión venció o se cerró. Ingresá de nuevo."); return; }
     if(prep.error) throw new Error(prep.error);
     let comprimido = "";
     for(let i = 0; i < prep.partes; i++){
       const cartel = document.getElementById("cargando");
       if(cartel) cartel.textContent = `Cargando datos desde la Base… (${i+1} de ${prep.partes})`;
-      let r;
-      try{ r = await llamarScript("parte", {token, id: prep.id, i}); }
-      catch(e){ r = await llamarScript("parte", {token, id: prep.id, i}); } // un reintento
+      const r = await conReintentos(() => llamarScript("parte", {token, id: prep.id, i}));
       if(r.error) throw new Error(r.error);
       comprimido += r.parte;
     }
