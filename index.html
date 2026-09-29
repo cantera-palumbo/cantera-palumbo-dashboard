@@ -90,8 +90,9 @@
   .badge-origen.mostrador{background:#8f8c7e;}
   .badge-origen.sindato{background:#b23b2e;}
 
-  .paneles{display:grid; grid-template-columns:1.4fr 1fr; gap:20px; margin-bottom:24px;}
-  .paneles--2{grid-template-columns:1fr 1fr;}
+  .paneles{display:grid; grid-template-columns:minmax(0,1.4fr) minmax(0,1fr); gap:20px; margin-bottom:24px;}
+  .paneles--2{grid-template-columns:minmax(0,1fr) minmax(0,1fr);}
+  .paneles > .panel{min-width:0;}
   .panel--full{grid-column:1/-1;}
   @media (max-width:900px){ .paneles, .paneles--2{grid-template-columns:1fr;} }
   .panel{
