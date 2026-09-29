@@ -109,6 +109,49 @@
   }
   .panel__toggle button.activo{background:var(--verde); color:#fff; border-color:var(--verde);}
 
+  /* ---------- Resumen del mes ---------- */
+  .rs-cabecera{margin-bottom:26px;}
+  .rs-titulo{font-size:clamp(22px,3vw,28px); font-weight:900; letter-spacing:-.01em;}
+  .rs-sub{font-size:13px; color:var(--texto-sec); margin-top:4px;}
+  .rs-bloque{margin-bottom:40px;}
+  .rs-titulares{display:grid; gap:10px;}
+  .rs-titular{display:flex; gap:14px; align-items:flex-start; background:#fff; border-radius:6px; padding:14px 18px;
+    border-left:4px solid var(--linea); box-shadow:var(--sombra-chica); font-size:14px; line-height:1.45;}
+  .rs-titular__icono{font-size:15px; font-weight:900; min-width:18px; text-align:center; line-height:1.4;}
+  .rs-titular.bien{border-left-color:#4f7a2a;} .rs-titular.bien .rs-titular__icono{color:#4f7a2a;}
+  .rs-titular.mal{border-left-color:#b23b2e;} .rs-titular.mal .rs-titular__icono{color:#b23b2e;}
+  .rs-titular.alerta{border-left-color:#c58a14;} .rs-titular.alerta .rs-titular__icono{color:#c58a14;}
+  .rs-titular.neutro .rs-titular__icono{color:var(--texto-sec);}
+  .rs-unidades{display:grid; grid-template-columns:repeat(3,1fr); gap:18px;}
+  .rs-unidad{background:#fff; border-radius:8px; padding:20px 22px 18px; box-shadow:var(--sombra-chica); border-top:5px solid var(--verde);}
+  .rs-unidad__nombre{font-size:12px; font-weight:800; text-transform:uppercase; letter-spacing:.06em;}
+  .rs-unidad__valor{font-size:clamp(24px,3vw,30px); font-weight:900; margin:6px 0 10px;}
+  .rs-unidad__vars{display:flex; flex-direction:column; gap:6px;}
+  .rs-unidad__barra{height:6px; background:var(--crema); border-radius:4px; margin-top:16px; overflow:hidden;}
+  .rs-unidad__barra span{display:block; height:100%; border-radius:4px;}
+  .rs-unidad__part{font-size:11.5px; color:var(--texto-sec); margin-top:6px;}
+  .rs-var{display:inline-flex; align-items:baseline; gap:6px; font-size:13px; font-weight:800; padding:3px 10px; border-radius:20px; width:max-content;}
+  .rs-var small{font-size:11px; font-weight:600; opacity:.8;}
+  .rs-var.bien{background:#e6f0dc; color:#2e6b1f;} .rs-var.mal{background:#f7e1db; color:#a3321f;}
+  .rs-var.neutro{background:var(--crema); color:var(--texto-sec);}
+  .rs-kpis{display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:14px; margin-bottom:20px;}
+  .rs-kpi{background:#fff; border-radius:8px; padding:16px 18px; box-shadow:var(--sombra-chica);}
+  .rs-kpi__label{font-size:11.5px; color:var(--texto-sec); font-weight:600;}
+  .rs-kpi__valor{font-size:26px; font-weight:900; margin:4px 0 6px;}
+  .rs-kpi__sub{font-size:11.5px; color:var(--texto-sec);}
+  .rs-lista{list-style:none;}
+  .rs-lista li{display:flex; justify-content:space-between; gap:14px; align-items:center; padding:11px 0; border-top:1px solid var(--linea);}
+  .rs-lista li:first-child{border-top:none;}
+  .rs-lista__nombre{font-weight:700; font-size:13.5px;}
+  .rs-lista__detalle{font-size:11.5px; color:var(--texto-sec); margin-top:2px;}
+  .rs-lista__monto{font-weight:800; font-size:13.5px; white-space:nowrap; text-align:right;}
+  .rs-lista__monto small{display:block; font-size:10.5px; font-weight:600; color:var(--texto-sec);}
+  .rs-chip{display:inline-block; font-size:10.5px; font-weight:700; padding:1px 8px; border-radius:20px; background:#e6f0dc; color:#2e6b1f; margin-left:6px;}
+  .rs-vacio{font-size:13px; color:var(--texto-sec); padding:10px 0;}
+  .rs-grafico{position:relative;}
+  .rs-grafico canvas{max-height:none !important;}
+  @media (max-width:900px){ .rs-unidades{grid-template-columns:1fr;} }
+
   .lista-clientes{list-style:none; margin-top:10px;}
   .lista-clientes li{
     display:flex; justify-content:space-between; align-items:baseline; padding:9px 0; border-top:1px solid var(--linea);
@@ -233,7 +276,8 @@
     </div>
   </div>
   <div class="tabs">
-    <button class="tab activo" data-tab="resumen">Resumen empresa</button>
+    <button class="tab activo" data-tab="mes">Resumen del mes</button>
+    <button class="tab" data-tab="resumen">Resumen empresa</button>
     <button class="tab" data-tab="franco">Gestión Vendedor</button>
     <button class="tab" data-tab="alertas">Alertas<span class="contador" id="contadorAlertas" style="display:none;"></span></button>
     <button class="tab" data-tab="cliente">Buscar cliente</button>
@@ -446,6 +490,279 @@ function resumenCantidades(lineas){
   lineas.forEach(l=>{ const cantidad = cantidadNumero(l.cantidad); if(!cantidad) return; const unidad = normalizarUnidad(l.unidad); m[unidad] = (m[unidad]||0) + cantidad; });
   const partes = Object.entries(m).map(([u,c])=>`${c.toLocaleString("es-AR",{maximumFractionDigits:1})} ${u}`);
   return partes.length ? partes.join(" · ") : "—";
+}
+
+// ================= RESUMEN DEL MES =================
+// Análisis del último MES CERRADO contra el mes cerrado anterior (y contra el mismo mes del año
+// anterior cuando haya datos). Muestra solo lo que las otras pestañas no tienen: qué cambió,
+// quién explicó el cambio, cómo se mueven los clientes y dónde compran. La unidad de negocio
+// sale de la modalidad: Cantera = ANCHORIS, Obra = cliente con B°/O°, Depósito = el resto.
+// "Clientes en riesgo" es la única parte al día de hoy, porque es un estado actual.
+const UNIDADES_NEG = ["Cantera","Depósito","Obra"];
+const COLOR_UNIDAD = {"Cantera":"#5f6f3d","Depósito":"#b07d2a","Obra":"#2f5f7a"};
+const COLOR_COMBO = {"Solo Depósito":"#b07d2a","Solo Cantera":"#5f6f3d","Solo Obra":"#2f5f7a","Depósito + Cantera":"#8ba05e",
+  "Depósito + Obra":"#d9a441","Cantera + Obra":"#6f8fa3","Las tres":"#3f4a29"};
+const RIESGO_MULTIPLO = 2.5, RIESGO_MIN_DIAS = 14, RIESGO_MIN_COMPRAS = 3, VENTANA_DIAS = 90, CAIDA_PRECIO = -0.05;
+let chartMovers = null, chartDonde = null;
+
+function unidadNegocio(modalidad){ return modalidad==="Retiro en Cantera" ? "Cantera" : (modalidad==="Entrega en Obra" ? "Obra" : "Depósito"); }
+function claveMesRs(anio, mes){ return anio + "-" + String(mes).padStart(2,"0"); }
+function mesAnteriorRs(clave){ let [a,m] = clave.split("-").map(Number); m--; if(!m){ m=12; a--; } return claveMesRs(a,m); }
+function nombreMesRs(clave, conAnio){ const [a,m] = clave.split("-").map(Number); return MESES_LARGO[m] + (conAnio ? " " + a : ""); }
+function diaLocalRs(fecha){ const d = new Date(fecha); return claveMesRs(d.getFullYear(), d.getMonth()+1) + "-" + String(d.getDate()).padStart(2,"0"); }
+function diasEntreRs(a, b){ return Math.round((Date.UTC(...b.split("-").map((x,i)=>i===1?x-1:+x)) - Date.UTC(...a.split("-").map((x,i)=>i===1?x-1:+x))) / 86400000); }
+function esAnonimoRs(nombre){ return !nombre || /consumidor final|an[oó]nimo/i.test(nombre) || !/[a-z0-9]/i.test(nombre); }
+function variacionRs(a, b){ return b ? (a - b) / b : null; }
+
+function acumularRs(lineas){
+  const a = { fact:0, m3:0, pedidos:new Set() };
+  lineas.forEach(l => { a.fact += l.total; if(l.medida === "m³") a.m3 += l.cant; a.pedidos.add(l.ref); });
+  a.nPedidos = a.pedidos.size;
+  return a;
+}
+function porUnidadRs(lineas){
+  const out = { Total: acumularRs(lineas) };
+  UNIDADES_NEG.forEach(u => out[u] = acumularRs(lineas.filter(l => l.u === u)));
+  return out;
+}
+
+// Cálculo puro (sin DOM): recibe las líneas del Panel y la fecha de hoy.
+function calcularResumenMes(lineasPanel, hoy){
+  const L = lineasPanel.map(l => {
+    const dia = diaLocalRs(l.fecha);
+    return { dia, mes: dia.slice(0,7), u: unidadNegocio(l.modalidad), ref: l.sistema + "|" + l.referencia,
+      cliente: String(l.cliente || "").trim(), categoria: l.categoria, medida: normalizarUnidad(l.unidad),
+      cant: cantidadNumero(l.cantidad), total: Number(l.total) || 0 };
+  });
+  const mesHoy = claveMesRs(hoy.getFullYear(), hoy.getMonth()+1);
+  const mes = mesAnteriorRs(mesHoy), mesAnt = mesAnteriorRs(mes);
+  const mesAnio = claveMesRs(Number(mes.slice(0,4)) - 1, Number(mes.slice(5,7)));
+  const deMes = m => L.filter(l => l.mes === m);
+  const r = { mes, mesAnt, mesAnio, uMes: porUnidadRs(deMes(mes)), uAnt: porUnidadRs(deMes(mesAnt)) };
+  const lineasAnio = deMes(mesAnio);
+  r.uAnio = lineasAnio.length ? porUnidadRs(lineasAnio) : null;
+  r.hayDatos = r.uMes.Total.fact > 0;
+
+  // Clientes (sin Consumidor Final ni anónimos)
+  const ultimoDia = L.reduce((m, l) => l.dia > m ? l.dia : m, "");
+  const cli = {};
+  L.forEach(l => {
+    if(esAnonimoRs(l.cliente)) return;
+    const c = cli[l.cliente] = cli[l.cliente] || { nombre:l.cliente, porMes:{}, dias:new Set(), reparto:{}, repartoMes:{}, fact90:0, primera:l.dia, ultima:l.dia };
+    c.porMes[l.mes] = (c.porMes[l.mes] || 0) + l.total;
+    c.dias.add(l.dia);
+    if(l.dia < c.primera) c.primera = l.dia;
+    if(l.dia > c.ultima) c.ultima = l.dia;
+    if(diasEntreRs(l.dia, ultimoDia) < VENTANA_DIAS){ c.reparto[l.u] = (c.reparto[l.u] || 0) + l.total; c.fact90 += l.total; }
+    if(l.mes === mes) c.repartoMes[l.u] = (c.repartoMes[l.u] || 0) + l.total;
+  });
+  const clientes = Object.values(cli);
+  // Orden fijo Depósito, Cantera, Obra: así "Depósito + Cantera" siempre se llama igual.
+  const unidadesDe = rep => { const t = Object.values(rep).reduce((s,v)=>s+v,0);
+    return ["Depósito","Cantera","Obra"].filter(u => t && (rep[u]||0) / t >= 0.05); };
+
+  // Dinámica: compraron, nuevos, volvieron (no compraron el mes anterior), no volvieron, retención
+  const compraronMes = clientes.filter(c => c.porMes[mes] > 0), compraronAnt = clientes.filter(c => c.porMes[mesAnt] > 0);
+  r.nuevos = compraronMes.filter(c => c.primera.slice(0,7) === mes).map(c => ({
+    nombre:c.nombre, primera:c.primera, fact:c.porMes[mes], unidades:unidadesDe(c.repartoMes) }))
+    .sort((a,b) => b.fact - a.fact);
+  const repitieron = compraronMes.filter(c => c.porMes[mesAnt] > 0);
+  const noVolvieron = compraronAnt.filter(c => !(c.porMes[mes] > 0));
+  r.clientes = {
+    mes: compraronMes.length, ant: compraronAnt.length, nuevos: r.nuevos.length,
+    volvieron: compraronMes.length - repitieron.length - r.nuevos.length,
+    noVolvieron: noVolvieron.length, noVolvieronFact: noVolvieron.reduce((s,c)=>s+c.porMes[mesAnt],0),
+    retencion: compraronAnt.length ? repitieron.length / compraronAnt.length : null
+  };
+
+  // Quién movió la facturación: diferencia de cada cliente entre el mes anterior y este.
+  const deltas = clientes.map(c => ({ nombre:c.nombre, delta:(c.porMes[mes]||0) - (c.porMes[mesAnt]||0) })).filter(d => d.delta);
+  r.suben = deltas.filter(d => d.delta > 0).sort((a,b) => b.delta - a.delta).slice(0,6);
+  r.bajan = deltas.filter(d => d.delta < 0).sort((a,b) => a.delta - b.delta).slice(0,6);
+
+  // Dónde compran: combinación de unidades en los últimos 90 días (una unidad cuenta si es >= 5%).
+  const combos = {};
+  clientes.filter(c => c.fact90 > 0).forEach(c => {
+    const us = unidadesDe(c.reparto);
+    const nombre = us.length === 3 ? "Las tres" : (us.length === 1 ? "Solo " + us[0] : us.join(" + "));
+    const k = combos[nombre] = combos[nombre] || { nombre, clientes:0, fact:0 };
+    k.clientes++; k.fact += c.fact90;
+  });
+  const ordenCombos = ["Solo Depósito","Solo Cantera","Solo Obra","Depósito + Cantera","Depósito + Obra","Cantera + Obra","Las tres"];
+  r.combos = ordenCombos.filter(n => combos[n]).map(n => combos[n]);
+  r.factCombos = r.combos.reduce((s,k)=>s+k.fact,0);
+  r.mixtos = r.combos.filter(k => k.nombre.includes("+") || k.nombre === "Las tres");
+
+  // En riesgo según su propia frecuencia (al día de hoy).
+  r.ultimoDia = ultimoDia;
+  r.riesgo = clientes.map(c => {
+    const dias = [...c.dias].filter(d => diasEntreRs(d, ultimoDia) < VENTANA_DIAS).sort();
+    if(dias.length < RIESGO_MIN_COMPRAS) return null;
+    const intervalo = diasEntreRs(dias[0], dias[dias.length-1]) / (dias.length - 1);
+    const sinComprar = diasEntreRs(c.ultima, ultimoDia);
+    if(sinComprar < Math.max(RIESGO_MIN_DIAS, Math.ceil(intervalo * RIESGO_MULTIPLO))) return null;
+    const us = unidadesDe(c.reparto);
+    return { nombre:c.nombre, intervalo:Math.max(1, Math.round(intervalo)), sinComprar, ultima:c.ultima,
+      mensual:c.fact90 / 3, unidades:us };
+  }).filter(Boolean).sort((a,b) => b.mensual - a.mensual);
+  r.riesgoMensual = r.riesgo.reduce((s,c)=>s+c.mensual,0);
+
+  // Bajas de precio por m³ (por unidad y producto, con volumen suficiente para no ser ruido).
+  r.bajasPrecio = [];
+  UNIDADES_NEG.forEach(u => {
+    const cat = {};
+    [[mes,"a"],[mesAnt,"b"]].forEach(([m,k]) => L.forEach(l => {
+      if(l.mes !== m || l.u !== u || l.medida !== "m³") return;
+      const x = cat[l.categoria] = cat[l.categoria] || { a:{f:0,q:0}, b:{f:0,q:0} };
+      x[k].f += l.total; x[k].q += l.cant;
+    }));
+    Object.entries(cat).forEach(([nombre, x]) => {
+      if(x.a.q < 20 || x.b.q < 20) return;
+      const pa = x.a.f / x.a.q, pb = x.b.f / x.b.q, v = variacionRs(pa, pb);
+      if(v <= CAIDA_PRECIO) r.bajasPrecio.push({ unidad:u, producto:nombre, antes:pb, ahora:pa, v });
+    });
+  });
+
+  r.titulares = titularesRs(r);
+  return r;
+}
+
+function flechaRs(v){ return v === null ? "" : (Math.abs(v) < 0.005 ? "= " : (v > 0 ? "▲ " : "▼ ")) + Math.abs(Math.round(v*100)) + "%"; }
+function diasTexto(n){ return n + (n === 1 ? " día" : " días"); }
+function plural(n, uno, varios){ return n + " " + (n === 1 ? uno : varios); }
+function tonoRs(v){ return v === null || Math.abs(v) < 0.005 ? "neutro" : (v > 0 ? "bien" : "mal"); }
+
+function titularesRs(r){
+  const t = [], M = nombreMesRs(r.mes), A = nombreMesRs(r.mesAnt);
+  if(!r.hayDatos) return [{ tono:"neutro", texto:"Todavía no hay ventas registradas en " + nombreMesRs(r.mes, true) + "." }];
+  const v = variacionRs(r.uMes.Total.fact, r.uAnt.Total.fact);
+  const vAnio = r.uAnio ? variacionRs(r.uMes.Total.fact, r.uAnio.Total.fact) : null;
+  t.push({ tono:tonoRs(v), texto:`${M.charAt(0).toUpperCase()+M.slice(1)} cerró en <b>${monedaCorta(r.uMes.Total.fact)}</b>` +
+    (v === null ? "." : `: <b>${flechaRs(v)}</b> contra ${A} (${monedaCorta(r.uAnt.Total.fact)})`) +
+    (vAnio === null ? "." : ` y <b>${flechaRs(vAnio)}</b> contra ${nombreMesRs(r.mesAnio, true)}.`) });
+
+  const vars = UNIDADES_NEG.map(u => ({ u, v:variacionRs(r.uMes[u].fact, r.uAnt[u].fact) })).filter(x => x.v !== null).sort((a,b) => b.v - a.v);
+  if(vars.length >= 2){
+    const mejor = vars[0], peor = vars[vars.length-1];
+    t.push({ tono:"neutro", texto: peor.v >= 0
+      ? `Crecieron las tres unidades: la que más, <b>${mejor.u}</b> (${flechaRs(mejor.v)}); la que menos, <b>${peor.u}</b> (${flechaRs(peor.v)}).`
+      : (mejor.v < 0 ? `Cayeron las tres unidades: la que más, <b>${peor.u}</b> (${flechaRs(peor.v)}).`
+        : `La unidad que más creció fue <b>${mejor.u}</b> (${flechaRs(mejor.v)}); la que más cayó, <b>${peor.u}</b> (${flechaRs(peor.v)}).`) });
+  }
+  if(r.suben.length || r.bajan.length){
+    const s = r.suben.slice(0,2).map(x => `<b>${x.nombre}</b> (+${monedaCorta(x.delta)})`).join(" y ");
+    const b = r.bajan[0];
+    t.push({ tono:"neutro", texto:"Quién movió la aguja: " + (s ? s + (r.suben.length > 1 ? " fueron los que más sumaron" : " fue el que más sumó") : "") +
+      (b ? (s ? "; " : "") + `la mayor baja fue <b>${b.nombre}</b> (−${monedaCorta(-b.delta)}).` : ".") });
+  }
+  const c = r.clientes, vc = variacionRs(c.mes, c.ant);
+  t.push({ tono:tonoRs(vc), texto:`Compraron <b>${plural(c.mes, "cliente", "clientes")}</b>` + (vc === null ? "" : ` (${flechaRs(vc)} contra ${A})`) +
+    `: <b>${plural(c.nuevos, "nuevo", "nuevos")}</b>` + (c.retencion === null ? "." : ` y el <b>${Math.round(c.retencion*100)}%</b> de los de ${A} volvió a comprar.`) });
+  if(r.riesgo.length){
+    t.push({ tono:"alerta", texto:`<b>${r.riesgo.length} ${r.riesgo.length === 1 ? "cliente compra" : "clientes compran"} menos seguido de lo habitual</b>: ` +
+      `${monedaCorta(r.riesgoMensual)} por mes en riesgo. El mayor es <b>${r.riesgo[0].nombre}</b> (lleva ${diasTexto(r.riesgo[0].sinComprar)}; solía comprar cada ${diasTexto(r.riesgo[0].intervalo)}).` });
+  }
+  if(r.mixtos.length && r.factCombos){
+    const n = r.mixtos.reduce((s,k)=>s+k.clientes,0), f = r.mixtos.reduce((s,k)=>s+k.fact,0);
+    t.push({ tono:"neutro", texto:`<b>${plural(n, "cliente", "clientes")}</b> compran en más de una unidad de negocio y explican el <b>${Math.round(f / r.factCombos * 100)}%</b> de la facturación de los últimos 90 días.` });
+  }
+  r.bajasPrecio.sort((a,b) => a.v - b.v).slice(0,2).forEach(p => t.push({ tono:"mal",
+    texto:`El precio promedio de <b>${p.producto}</b> en ${p.unidad} bajó <b>${Math.abs(Math.round(p.v*100))}%</b> contra ${A} (${moneda(p.antes)} → ${moneda(p.ahora)} por m³).` }));
+  return t;
+}
+
+function chipVarRs(v, contra){
+  if(v === null) return `<span class="rs-var neutro">sin datos <small>de ${contra}</small></span>`;
+  return `<span class="rs-var ${tonoRs(v)}">${flechaRs(v)} <small>vs ${contra}</small></span>`;
+}
+function escaparRs(s){ return String(s).replace(/[&<>"]/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[ch])); }
+function fechaDiaRs(dia){ const [a,m,d] = dia.split("-"); return `${d}/${m}`; }
+
+function renderResumenMes(){
+  const cont = document.getElementById("pestana-mes");
+  let r;
+  try { r = calcularResumenMes(LINEAS, new Date()); }
+  catch(err){ cont.innerHTML = `<div class="estado error">No se pudo armar el resumen (${escaparRs(err.message)}).</div>`; return; }
+  const M = nombreMesRs(r.mes, true), A = nombreMesRs(r.mesAnt), AA = nombreMesRs(r.mesAnio, true);
+  const iconos = { bien:"▲", mal:"▼", alerta:"⚠", neutro:"•" };
+
+  const unidades = UNIDADES_NEG.map(u => {
+    const f = r.uMes[u].fact, part = r.uMes.Total.fact ? f / r.uMes.Total.fact : 0;
+    return `<div class="rs-unidad" style="border-top-color:${COLOR_UNIDAD[u]}">
+      <div class="rs-unidad__nombre" style="color:${COLOR_UNIDAD[u]}">${u}</div>
+      <div class="rs-unidad__valor">${monedaCorta(f)}</div>
+      <div class="rs-unidad__vars">${chipVarRs(variacionRs(f, r.uAnt[u].fact), A)}${r.uAnio ? chipVarRs(variacionRs(f, r.uAnio[u].fact), AA) : ""}</div>
+      <div class="rs-unidad__barra"><span style="width:${Math.round(part*100)}%; background:${COLOR_UNIDAD[u]}"></span></div>
+      <div class="rs-unidad__part">${Math.round(part*100)}% de la facturación del mes</div>
+    </div>`;
+  }).join("");
+
+  const c = r.clientes;
+  const kpis = [
+    ["Compraron", c.mes, chipVarRs(variacionRs(c.mes, c.ant), A)],
+    ["Nuevos", c.nuevos, `<span class="rs-kpi__sub">primera compra en ${nombreMesRs(r.mes)}</span>`],
+    ["Volvieron", c.volvieron, `<span class="rs-kpi__sub">no habían comprado en ${A}</span>`],
+    ["Todavía no volvieron", c.noVolvieron, `<span class="rs-kpi__sub">compraban ${monedaCorta(c.noVolvieronFact)} en ${A}</span>`],
+    ["Retención", c.retencion === null ? "—" : Math.round(c.retencion*100) + "%", `<span class="rs-kpi__sub">de los clientes de ${A} volvió</span>`]
+  ].map(([l,v,s]) => `<div class="rs-kpi"><div class="rs-kpi__label">${l}</div><div class="rs-kpi__valor">${v}</div>${s}</div>`).join("");
+
+  const chipsUnidades = us => us.length > 1 ? `<span class="rs-chip">compra en ${us.length} unidades</span>` : "";
+  const riesgo = r.riesgo.slice(0,6).map(x => `<li><div><div class="rs-lista__nombre">${escaparRs(x.nombre)}${chipsUnidades(x.unidades)}</div>
+      <div class="rs-lista__detalle">${x.unidades.join(" + ") || "—"} · compraba cada ~${diasTexto(x.intervalo)} · lleva <b>${diasTexto(x.sinComprar)}</b> sin comprar</div></div>
+      <div class="rs-lista__monto">${monedaCorta(x.mensual)}<small>por mes</small></div></li>`).join("");
+  const nuevos = r.nuevos.slice(0,6).map(x => `<li><div><div class="rs-lista__nombre">${escaparRs(x.nombre)}${chipsUnidades(x.unidades)}</div>
+      <div class="rs-lista__detalle">${x.unidades.join(" + ")} · primera compra el ${fechaDiaRs(x.primera)}</div></div>
+      <div class="rs-lista__monto">${monedaCorta(x.fact)}<small>en ${nombreMesRs(r.mes)}</small></div></li>`).join("");
+
+  cont.innerHTML = `
+    <div class="rs-cabecera">
+      <div class="rs-titulo">Resumen de ${M}</div>
+      <div class="rs-sub">Mes cerrado · comparado contra ${nombreMesRs(r.mesAnt, true)}${r.uAnio ? " y " + AA : ""}</div>
+    </div>
+    <div class="rs-bloque rs-titulares">${r.titulares.map(t => `<div class="rs-titular ${t.tono}"><div class="rs-titular__icono">${iconos[t.tono]}</div><div>${t.texto}</div></div>`).join("")}</div>
+    <div class="rs-bloque"><div class="seccion-titulo">Unidades de negocio</div><div class="rs-unidades">${unidades}</div></div>
+    <div class="rs-bloque">
+      <div class="seccion-titulo">Clientes</div>
+      <div class="rs-kpis">${kpis}</div>
+      <div class="paneles paneles--2">
+        <div class="panel"><h3>¿Quién movió la facturación?</h3><div class="panel__sub">Diferencia de cada cliente entre ${A} y ${nombreMesRs(r.mes)}</div><div class="rs-grafico" style="height:${Math.max(180, (r.suben.length + r.bajan.length) * 30 + 30)}px"><canvas id="chartMovers"></canvas></div></div>
+        <div class="panel"><h3>¿Dónde compran?</h3><div class="panel__sub">Clientes de los últimos 90 días según las unidades donde compran (facturación)</div><div class="rs-grafico" style="height:320px"><canvas id="chartDonde"></canvas></div></div>
+      </div>
+      <div class="paneles paneles--2">
+        <div class="panel"><h3>⚠ Clientes en riesgo</h3><div class="panel__sub">Compran menos seguido de lo habitual para ellos · al ${fechaDiaRs(r.ultimoDia || "0000-00-00")}</div>
+          ${riesgo ? `<ul class="rs-lista">${riesgo}</ul>` : `<div class="rs-vacio">Ninguno: todos los clientes frecuentes compraron dentro de su ritmo habitual. 👍</div>`}</div>
+        <div class="panel"><h3>★ Clientes nuevos de ${nombreMesRs(r.mes)}</h3><div class="panel__sub">${r.nuevos.length === 1 ? "1 cliente compró" : r.nuevos.length + " clientes compraron"} por primera vez${r.nuevos.length > 6 ? " · los 6 más grandes" : ""}</div>
+          ${nuevos ? `<ul class="rs-lista">${nuevos}</ul>` : `<div class="rs-vacio">No hubo clientes nuevos.</div>`}</div>
+      </div>
+    </div>`;
+
+  const movers = r.suben.concat(r.bajan.slice().reverse());
+  if(chartMovers) chartMovers.destroy();
+  chartMovers = new Chart(document.getElementById("chartMovers"), {
+    type:"bar",
+    // El monto va pegado al nombre (en el eje), así nunca se pisa con las barras.
+    data:{ labels:movers.map(x => { const max = window.innerWidth < 600 ? 14 : 24;
+        const nombre = x.nombre.length > max ? x.nombre.slice(0, max - 1) + "…" : x.nombre;
+        return nombre + "   " + (x.delta > 0 ? "+" : "−") + monedaCorta(Math.abs(x.delta)); }),
+      datasets:[{ data:movers.map(x => x.delta), backgroundColor:movers.map(x => x.delta > 0 ? "#5f8a3a" : "#c0513f"), borderRadius:4, barThickness:16 }] },
+    options:{ indexAxis:"y", maintainAspectRatio:false, plugins:{ legend:{display:false},
+        tooltip:{ callbacks:{ label:ctx => (ctx.raw > 0 ? "+" : "−") + moneda(Math.abs(ctx.raw)) } },
+        datalabels:{ display:false } },
+      scales:{ x:{ grid:{color:"#eeece5"}, ticks:{ callback:v => monedaCorta(v) } },
+        y:{ grid:{display:false}, ticks:{ font:{size:11, weight:"600"}, color:ctx => movers[ctx.index] && movers[ctx.index].delta < 0 ? "#a3321f" : "#2e6b1f" } } } }
+  });
+
+  if(chartDonde) chartDonde.destroy();
+  chartDonde = new Chart(document.getElementById("chartDonde"), {
+    type:"doughnut",
+    data:{ labels:r.combos.map(k => `${k.nombre} (${k.clientes})`),
+      datasets:[{ data:r.combos.map(k => k.fact), backgroundColor:r.combos.map(k => COLOR_COMBO[k.nombre]), borderColor:"#fff", borderWidth:2 }] },
+    options:{ maintainAspectRatio:false, cutout:"58%", plugins:{
+        legend:{ position:"bottom", labels:{ boxWidth:12, padding:12, font:{size:11.5} } },
+        tooltip:{ callbacks:{ label:ctx => `${ctx.label}: ${moneda(ctx.raw)}` } },
+        datalabels:{ display:ctx => r.factCombos && ctx.dataset.data[ctx.dataIndex] / r.factCombos >= 0.05, color:"#fff", font:{size:11, weight:"800"},
+          formatter:v => Math.round(v / r.factCombos * 100) + "%" } } }
+  });
 }
 
 // ---------- Tabs ----------
@@ -1234,7 +1551,8 @@ async function cargar(){
     PEDIDOS_FRANCO_CON_OPORTUNIDAD_PENDIENTE = data.pedidosFrancoConOportunidadPendiente || [];
 
     document.getElementById("contenido").innerHTML = `
-      <div class="pestana activa" id="pestana-resumen">
+      <div class="pestana activa" id="pestana-mes"></div>
+      <div class="pestana" id="pestana-resumen">
         <div class="filtros">
           <div class="filtros__grupo"><label for="fMes">Mes</label><select id="fMes"><option value="todos">Todos</option></select></div>
           <div class="filtros__grupo"><label for="fVendedor">Vendedor / origen</label><select id="fVendedor"><option value="todos">Todos</option></select></div>
@@ -1371,6 +1689,7 @@ async function cargar(){
     renderComision();
     renderAlerta();
     renderTendencia();
+    renderResumenMes();
 
     ["fMes","fVendedor","fModalidad"].forEach(id=>{
       document.getElementById(id).addEventListener("change", renderResumen);
