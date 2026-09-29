@@ -504,6 +504,7 @@ const COLOR_COMBO = {"Solo Depósito":"#b07d2a","Solo Cantera":"#5f6f3d","Solo O
   "Depósito + Obra":"#d9a441","Cantera + Obra":"#6f8fa3","Las tres":"#3f4a29"};
 const RIESGO_MULTIPLO = 2.5, RIESGO_MIN_DIAS = 14, RIESGO_MIN_COMPRAS = 3, VENTANA_DIAS = 90, CAIDA_PRECIO = -0.05;
 let chartMovers = null, chartDonde = null;
+const PRIMER_MES_COMISION = "2026-09"; // primer mes completo de Franco (arrancó el 31/08/2026)
 
 function unidadNegocio(modalidad){ return modalidad==="Retiro en Cantera" ? "Cantera" : (modalidad==="Entrega en Obra" ? "Obra" : "Depósito"); }
 function claveMesRs(anio, mes){ return anio + "-" + String(mes).padStart(2,"0"); }
@@ -1543,7 +1544,9 @@ async function cargar(){
     document.getElementById("usuarioEmail").textContent = data.usuario || "";
     document.getElementById("usuario").style.display = "block";
     LINEAS = data.lineas || [];
-    COMISION = data.comision || [];
+    // Franco arrancó el 31/08: ese único día no es un mes de comisión (mostraba agosto con el
+    // básico completo). La comisión se muestra desde su primer mes completo.
+    COMISION = (data.comision || []).filter(c => claveMesRs(c.anio, c.mes) >= PRIMER_MES_COMISION);
     GANADO = data.ganadoSinPedido || [];
     EMPRESAS_SIN_CRUZAR = data.empresasFrancoSinCruzar || [];
     EMBUDO = data.embudoFranco || null;
