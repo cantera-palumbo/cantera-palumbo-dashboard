@@ -151,6 +151,22 @@
   .rs-vacio{font-size:13px; color:var(--texto-sec); padding:10px 0;}
   .rs-grafico{position:relative;}
   .rs-grafico canvas{max-height:none !important;}
+  .rs-nota{font-size:11.5px; color:var(--texto-sec); margin-top:-8px;}
+  .cobro-mes{background:#fff; border-radius:8px; padding:16px 20px; box-shadow:var(--sombra-chica); margin-bottom:14px; border-left:5px solid var(--linea);}
+  .cobro-mes--curso{border-left-color:var(--verde);}
+  .cobro-mes__titulo{font-weight:800; font-size:15px; margin-bottom:10px; text-transform:capitalize;}
+  .cobro-mes__cuenta{display:flex; flex-wrap:wrap; align-items:flex-end; gap:10px 16px;}
+  .cobro-mes__cuenta span{display:block; font-size:11px; color:var(--texto-sec); font-weight:600; margin-bottom:2px;}
+  .cobro-mes__cuenta b{font-size:18px; font-weight:800;}
+  .cobro-mes__op{font-size:18px; font-weight:800; color:var(--texto-sec); padding-bottom:1px;}
+  .cobro-mes__total b{font-size:22px; font-weight:900; color:var(--verde);}
+  .cobro-mes__nota{font-size:12.5px; margin-top:10px; color:#6b4e12; background:#f8efd9; border-radius:6px; padding:7px 12px; display:inline-block;}
+  .fz-tabla{width:100%; border-collapse:collapse; font-size:13px;}
+  .fz-tabla th{font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--texto-sec); text-align:left; padding:8px 10px; border-bottom:2px solid var(--linea);}
+  .fz-tabla td{padding:9px 10px; border-bottom:1px solid var(--linea);}
+  .fz-tabla .num{text-align:right; white-space:nowrap;}
+  .fz-tabla tr.fz-mejor td{background:#eef5e6;}
+  .fz-scroll{overflow-x:auto;}
   .rs-cerrado{display:grid; grid-template-columns:repeat(4,1fr); gap:14px;}
   .rs-cerrado__item{background:#fff; border-radius:8px; padding:12px 16px; box-shadow:var(--sombra-chica); display:flex; flex-direction:column; gap:6px; font-size:18px;}
   .rs-cerrado__nombre{font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.06em; color:var(--texto-sec);}
@@ -283,6 +299,8 @@
     <button class="tab activo" data-tab="mes">Resumen del mes</button>
     <button class="tab" data-tab="resumen">Resumen empresa</button>
     <button class="tab" data-tab="franco">Gestión Vendedor</button>
+    <button class="tab" data-tab="cobros" id="tabCobros" style="display:none;">Cobros</button>
+    <button class="tab" data-tab="compras" id="tabCompras" style="display:none;">Compras</button>
     <button class="tab" data-tab="alertas">Alertas<span class="contador" id="contadorAlertas" style="display:none;"></span></button>
     <button class="tab" data-tab="cliente">Buscar cliente</button>
   </div>
@@ -449,6 +467,7 @@ function datalabelsBarraH(formatFn){
     formatter: formatFn || (v=>monedaCorta(v)) };
 }
 
+let COMPRAS_INSUMOS = [], chartCobros = null;
 let LINEAS = [], COMISION = [], GANADO = [], LINEAS_FILTRADAS = [], EMPRESAS_SIN_CRUZAR = [], EMBUDO = null,
     PEDIDOS_FRANCO_SIN_OPORTUNIDAD = [], PEDIDOS_FRANCO_CON_OPORTUNIDAD_PENDIENTE = [];
 let chartClientes=null, chartModalidad=null, chartCategoria=null, chartTendencia=null,
@@ -509,6 +528,9 @@ const COLOR_COMBO = {"Solo Depósito":"#b07d2a","Solo Cantera":"#5f6f3d","Solo O
 const RIESGO_MULTIPLO = 2.5, RIESGO_MIN_DIAS = 14, RIESGO_MIN_COMPRAS = 3, VENTANA_DIAS = 90, CAIDA_PRECIO = -0.05;
 let chartMovers = null, chartDonde = null;
 const PRIMER_MES_COMISION = "2026-09"; // primer mes completo de Franco (arrancó el 31/08/2026)
+const INICIO_FRANCO = "2026-08-31";
+// Mismos tramos que getComision (Codigo.gs): el porcentaje se aplica a toda la facturación del mes.
+const TRAMOS_COMISION = [{hasta:18000000, siguiente:0.03}, {hasta:30000000, siguiente:0.035}, {hasta:Infinity, siguiente:null}];
 
 function unidadNegocio(modalidad){ return modalidad==="Retiro en Cantera" ? "Cantera" : (modalidad==="Entrega en Obra" ? "Obra" : "Depósito"); }
 function claveMesRs(anio, mes){ return anio + "-" + String(mes).padStart(2,"0"); }
@@ -549,6 +571,7 @@ function calcularResumenMes(lineasPanel){
       cliente: String(l.cliente || "").trim(), categoria: l.categoria, medida: normalizarUnidad(l.unidad),
       cant: cantidadNumero(l.cantidad), total: Number(l.total) || 0 };
   });
+  const primerDia = L.reduce((m, l) => !m || l.dia < m ? l.dia : m, "");
   const ultimoDia = L.reduce((m, l) => l.dia > m ? l.dia : m, "");
   const r = { ultimoDia, hayDatos: !!ultimoDia };
   if(!ultimoDia) return Object.assign(r, { titulares: titularesRs(r) });
@@ -589,6 +612,8 @@ function calcularResumenMes(lineasPanel){
   r.nuevos = compraronMes.filter(c => c.primera >= act.desde).map(c => ({
     nombre:c.nombre, primera:c.primera, fact:c.a, unidades:unidadesDe(c.repartoMes) }))
     .sort((a,b) => b.fact - a.fact);
+  // "Nuevo" = primera compra desde que hay datos: con poca historia puede incluir clientes que volvieron después de meses.
+  r.historiaDesde = primerDia;
   const repitieron = compraronMes.filter(c => c.b > 0);
   const noVolvieron = compraronAnt.filter(c => !(c.a > 0));
   r.clientes = {
@@ -748,9 +773,10 @@ function renderResumenMes(){
   const riesgo = r.riesgo.slice(0,6).map(x => `<li><div><div class="rs-lista__nombre">${escaparRs(x.nombre)}${chipsUnidades(x.unidades)}</div>
       <div class="rs-lista__detalle">${x.unidades.join(" + ") || "—"} · compraba cada ~${diasTexto(x.intervalo)} · lleva <b>${diasTexto(x.sinComprar)}</b> sin comprar</div></div>
       <div class="rs-lista__monto">${monedaCorta(x.mensual)}<small>por mes</small></div></li>`).join("");
-  const nuevos = r.nuevos.slice(0,6).map(x => `<li><div><div class="rs-lista__nombre">${escaparRs(x.nombre)}${chipsUnidades(x.unidades)}</div>
+  const itemNuevo = x => `<li><div><div class="rs-lista__nombre">${escaparRs(x.nombre)}${chipsUnidades(x.unidades)}</div>
       <div class="rs-lista__detalle">${x.unidades.join(" + ")} · primera compra el ${fechaDiaRs(x.primera)}</div></div>
-      <div class="rs-lista__monto">${monedaCorta(x.fact)}<small>en ${nombreMesRs(r.mes)}</small></div></li>`).join("");
+      <div class="rs-lista__monto">${monedaCorta(x.fact)}<small>en ${nombreMesRs(r.mes)}</small></div></li>`;
+  const nuevos = r.nuevos.slice(0,6).map(itemNuevo).join("");
 
   const faltan = r.noVolvieronLista.slice(0,6).map(x => `<li><div><div class="rs-lista__nombre">${escaparRs(x.nombre)}${chipsUnidades(x.unidades)}</div>
       <div class="rs-lista__detalle">${x.unidades.join(" + ") || "—"} · última compra el ${fechaDiaRs(x.ultima)}</div></div>
@@ -791,6 +817,7 @@ function renderResumenMes(){
       <div class="paneles paneles--2">
         <div class="panel panel--full"><h3>★ Clientes nuevos de ${nombreMesRs(r.mes)}</h3><div class="panel__sub">${r.nuevos.length === 1 ? "1 cliente compró" : r.nuevos.length + " clientes compraron"} por primera vez${r.nuevos.length > 6 ? " · los 6 más grandes" : ""}</div>
           ${nuevos ? `<ul class="rs-lista">${nuevos}</ul>` : `<div class="rs-vacio">Todavía no hay clientes nuevos.</div>`}</div>
+        <div class="rs-nota panel--full">"Nuevo" = primera compra desde el ${fechaDiaRs(r.historiaDesde)}, que es desde cuando hay datos. Mientras la historia sea corta, puede incluir clientes que volvieron después de mucho tiempo. Cada obra (O°/B°) cuenta como un cliente aparte.</div>
       </div>
     </div>
     ${cerrado}`;
@@ -822,6 +849,123 @@ function renderResumenMes(){
         datalabels:{ display:ctx => r.factCombos && ctx.dataset.data[ctx.dataIndex] / r.factCombos >= 0.05, color:"#fff", font:{size:11, weight:"800"},
           formatter:v => Math.round(v / r.factCombos * 100) + "%" } } }
   });
+}
+
+// ================= COBROS Y COMPRAS =================
+// Solo datos completos de Odoo: cómo se pagó cada venta del punto de venta (TPV) y el precio de
+// cada compra de insumos para revender (facturas de proveedor). Nada estimado.
+const GRUPOS_COBRO = ["Cuenta de cliente","Efectivo","Transferencia","Mixto","Sin dato","Pedido de venta"];
+const COLOR_COBRO = {"Cuenta de cliente":"#2f5f7a","Efectivo":"#5f8a3a","Transferencia":"#8ba05e","Mixto":"#d9a441","Sin dato":"#c9c5b8","Pedido de venta":"#b8b3a4"};
+const CONTADO = ["Efectivo","Transferencia"];
+
+function grupoCobro(l){
+  if(l.sistema !== "POS") return "Pedido de venta";
+  const m = String(l.medioPago || "");
+  if(!m) return "Sin dato";
+  if(/cuenta/i.test(m)) return "Cuenta de cliente";
+  if(/efectivo/i.test(m)) return "Efectivo";
+  if(/transfer/i.test(m)) return "Transferencia";
+  if(/mixto/i.test(m)) return "Mixto";
+  return m;
+}
+function claveMesLinea(l){ return claveMesRs(l.anio, l.mes); }
+function porcentajeTexto(a, b){ return b ? Math.round(a / b * 100) + "%" : "—"; }
+
+// Las pestañas Cobros y Compras solo aparecen si el script mandó el permiso (columna Permisos
+// de Accesos). Sin permiso, el script tampoco manda esos datos.
+function prepararCobros(permisos){
+  const puede = p => (permisos || []).includes(p);
+  document.getElementById("tabCobros").style.display = puede("cobros") ? "" : "none";
+  document.getElementById("tabCompras").style.display = puede("compras") ? "" : "none";
+  if(puede("cobros")){
+    const sel = document.getElementById("fCobrosMes");
+    const meses = [...new Set(LINEAS.filter(l => l.sistema === "POS").map(claveMesLinea))].sort().reverse();
+    sel.innerHTML = meses.map(m => `<option value="${m}">${nombreMesRs(m, true)}</option>`).join("");
+    sel.addEventListener("change", renderCobros);
+    renderCobros();
+  }
+  if(puede("compras")) renderInsumos();
+}
+
+function renderCobros(){
+  const mes = document.getElementById("fCobrosMes").value;
+  const meses = [...new Set(LINEAS.map(claveMesLinea))].sort();
+  const suma = {};  // suma[mes][grupo]
+  LINEAS.forEach(l => { const m = claveMesLinea(l), g = grupoCobro(l);
+    suma[m] = suma[m] || {}; suma[m][g] = (suma[m][g] || 0) + l.total; });
+  const s = suma[mes] || {};
+  const pos = GRUPOS_COBRO.filter(g => g !== "Pedido de venta").reduce((t,g) => t + (s[g] || 0), 0);
+  const cc = s["Cuenta de cliente"] || 0, contado = CONTADO.reduce((t,g) => t + (s[g] || 0), 0);
+  document.getElementById("cobrosKpis").innerHTML = `
+    <div class="kpi"><div class="kpi__label">Vendido con "Cuenta de cliente"</div><div class="kpi__valor">${monedaCorta(cc)}</div><div class="kpi__sub">${porcentajeTexto(cc, pos)} del punto de venta · se paga después (no es lo cobrado)</div></div>
+    <div class="kpi"><div class="kpi__label">Al contado</div><div class="kpi__valor">${monedaCorta(contado)}</div><div class="kpi__sub">${porcentajeTexto(contado, pos)} · efectivo y transferencia</div></div>
+    <div class="kpi"><div class="kpi__label">Pedidos de venta</div><div class="kpi__valor">${monedaCorta(s["Pedido de venta"] || 0)}</div><div class="kpi__sub">Odoo no registra cómo se pagan</div></div>`;
+  const sinDato = s["Sin dato"] || 0;
+  document.getElementById("cobrosAlcance").textContent = "Ventas del punto de venta según el medio de pago que registra Odoo. Los pedidos de venta van aparte, en gris, porque Odoo no guarda cómo se pagaron." +
+    (sinDato ? ` Hay ${monedaCorta(sinDato)} del punto de venta todavía sin medio de pago (se completa con la próxima actualización diaria).` : "");
+
+  const grupos = GRUPOS_COBRO.filter(g => meses.some(m => suma[m] && suma[m][g]));
+  if(chartCobros) chartCobros.destroy();
+  chartCobros = new Chart(document.getElementById("chartCobros"), {
+    type:"bar",
+    data:{ labels:meses.map(m => nombreMesRs(m)), datasets:grupos.map(g => ({ label:g, data:meses.map(m => (suma[m] && suma[m][g]) || 0), backgroundColor:COLOR_COBRO[g] || "#999", borderRadius:3 })) },
+    options:{ plugins:{ legend:{ position:"bottom", labels:{ boxWidth:12 } }, tooltip:{ callbacks:{ label:c => `${c.dataset.label}: ${moneda(c.raw)}` } }, datalabels:{ display:false } },
+      scales:{ x:{ stacked:true, grid:{display:false} }, y:{ stacked:true, ticks:{ callback:v => monedaCorta(v) } } } }
+  });
+
+  // Por unidad de negocio (solo punto de venta, mes elegido)
+  const delMes = LINEAS.filter(l => l.sistema === "POS" && claveMesLinea(l) === mes);
+  const filasU = UNIDADES_NEG.map(u => {
+    const ls = delMes.filter(l => unidadNegocio(l.modalidad) === u);
+    const t = ls.reduce((a,l) => a + l.total, 0), c = ls.filter(l => grupoCobro(l) === "Cuenta de cliente").reduce((a,l) => a + l.total, 0);
+    const k = ls.filter(l => CONTADO.includes(grupoCobro(l))).reduce((a,l) => a + l.total, 0);
+    return `<tr><td><b style="color:${COLOR_UNIDAD[u]}">${u}</b></td><td class="num">${moneda(k)}</td><td class="num">${moneda(c)}</td><td class="num"><b>${porcentajeTexto(c, t)}</b></td></tr>`;
+  }).join("");
+  document.getElementById("cobrosUnidades").innerHTML = `<div class="fz-scroll"><table class="fz-tabla"><thead><tr><th>Unidad</th><th class="num">Contado</th><th class="num">Cuenta de cliente</th><th class="num">% a cuenta</th></tr></thead><tbody>${filasU}</tbody></table></div>`;
+
+  // Clientes que más compran a cuenta en el mes
+  const porCli = {};
+  delMes.filter(l => grupoCobro(l) === "Cuenta de cliente").forEach(l => { const c = String(l.cliente || "Sin cliente").trim(); porCli[c] = (porCli[c] || 0) + l.total; });
+  const top = Object.entries(porCli).sort((a,b) => b[1] - a[1]).slice(0,10);
+  document.getElementById("cobrosClientes").innerHTML = top.length
+    ? `<ul class="rs-lista">${top.map(([c,t]) => `<li><div class="rs-lista__nombre">${escaparRs(c)}</div><div class="rs-lista__monto">${moneda(t)}</div></li>`).join("")}</ul>`
+    : `<div class="rs-vacio">No hay ventas con "Cuenta de cliente" en este mes.</div>`;
+}
+
+// Precio de compra de cada insumo por proveedor, y el precio al que se vende (de las ventas).
+function renderInsumos(){
+  const cont = document.getElementById("insumosCont");
+  if(!COMPRAS_INSUMOS.length){
+    cont.innerHTML = `<div class="panel panel--full"><div class="rs-vacio">Todavía no hay compras de insumos cargadas. Aparecen después de la próxima actualización diaria desde Odoo.</div></div>`;
+    return;
+  }
+  const insumos = [...new Set(COMPRAS_INSUMOS.map(c => c.insumo))];
+  cont.innerHTML = insumos.map(ins => {
+    const cs = COMPRAS_INSUMOS.filter(c => c.insumo === ins && c.cantidad > 0);
+    const prov = {};
+    cs.forEach(c => { const p = prov[c.proveedor] = prov[c.proveedor] || { nombre:c.proveedor, compras:0, cant:0, pagado:0, ultima:null };
+      p.compras++; p.cant += c.cantidad; p.pagado += c.subtotal; if(!p.ultima || c.fecha > p.ultima.fecha) p.ultima = c; });
+    const lista = Object.values(prov).map(p => Object.assign(p, { promedio: p.cant ? p.pagado / p.cant : 0 })).sort((a,b) => b.pagado - a.pagado);
+    const minimo = Math.min(...lista.map(p => p.promedio));
+    // Diferencia real pagada contra el proveedor de menor precio promedio (misma cantidad).
+    const diferencia = lista.reduce((t,p) => t + (p.promedio - minimo) * p.cant, 0);
+    const desde = cs.reduce((m,c) => !m || c.fecha < m ? c.fecha : m, "");
+    const re = ins === "Piedra bola" ? /bola/i : /arena\s*fina/i;
+    const ventas = LINEAS.filter(l => re.test(l.producto || "") && normalizarUnidad(l.unidad) === "m³" && l.fecha >= desde);
+    const vM3 = ventas.reduce((t,l) => t + cantidadNumero(l.cantidad), 0), vTot = ventas.reduce((t,l) => t + l.total, 0);
+    const unidades = [...new Set(cs.map(c => c.unidad).filter(Boolean))];
+    const filas = lista.map(p => `<tr class="${p.promedio === minimo && lista.length > 1 ? "fz-mejor" : ""}">
+      <td><b>${escaparRs(p.nombre)}</b></td><td class="num">${p.compras}</td><td class="num">${p.cant.toLocaleString("es-AR")}</td>
+      <td class="num"><b>${moneda(p.promedio)}</b></td><td class="num">${moneda(p.ultima.precio)} <small style="color:var(--texto-sec)">(${fechaDiaRs(diaLocalRs(p.ultima.fecha))})</small></td>
+      <td class="num">${moneda(p.pagado)}</td></tr>`).join("");
+    return `<div class="panel panel--full"><h3>${ins}</h3>
+      <div class="panel__sub">Compras en facturas de proveedor desde el ${fechaDiaRs(diaLocalRs(desde))} · unidad en Odoo: ${unidades.length ? unidades.join(", ") : "sin cargar"} · en verde, el de menor precio promedio</div>
+      <div class="fz-scroll"><table class="fz-tabla"><thead><tr><th>Proveedor</th><th class="num">Compras</th><th class="num">Cantidad</th><th class="num">Precio promedio</th><th class="num">Último precio</th><th class="num">Total pagado</th></tr></thead><tbody>${filas}</tbody></table></div>
+      <div class="rs-kpis" style="margin:16px 0 0">
+        ${lista.length > 1 ? `<div class="rs-kpi"><div class="rs-kpi__label">Pagado de más vs el más barato</div><div class="rs-kpi__valor">${moneda(diferencia)}</div><span class="rs-kpi__sub">si todo se hubiera comprado al precio promedio del más barato</span></div>` : ""}
+        <div class="rs-kpi"><div class="rs-kpi__label">Se vendió a (promedio)</div><div class="rs-kpi__valor">${vM3 ? moneda(vTot / vM3) + " /m³" : "—"}</div><span class="rs-kpi__sub">${vM3 ? vM3.toLocaleString("es-AR", {maximumFractionDigits:1}) + " m³ vendidos desde la misma fecha" : "sin ventas con ese nombre de producto"}</span></div>
+      </div></div>`;
+  }).join("");
 }
 
 // ---------- Tabs ----------
@@ -1246,33 +1390,55 @@ function renderTopClientesGestion(lineas){
   chartGestionClientesM3 = crearGrafico("chartGestionClientesM3", chartGestionClientesM3, topM3, v=>v.toLocaleString("es-AR",{maximumFractionDigits:1})+" m³", "#8ba05e", "Volumen (m³)");
 }
 
+// Clientes de Franco cuya PRIMERA compra (en todos los datos, con cualquier vendedor) es desde que
+// él arrancó. Devuelve la lista con lo que facturaron en las líneas recibidas (ya filtradas).
+function clientesNuevosFranco(lineasFranco){
+  const primera = {};
+  let historiaDesde = "";
+  LINEAS.forEach(l => {
+    const d = diaLocalRs(l.fecha), c = String(l.cliente || "").trim();
+    if(!historiaDesde || d < historiaDesde) historiaDesde = d;
+    if(esAnonimoRs(c)) return;
+    if(!primera[c] || d < primera[c]) primera[c] = d;
+  });
+  const porCliente = {};
+  lineasFranco.forEach(l => {
+    const c = String(l.cliente || "").trim();
+    if(esAnonimoRs(c) || primera[c] < INICIO_FRANCO) return;
+    const x = porCliente[c] = porCliente[c] || { nombre:c, primera:primera[c], fact:0, reparto:{} };
+    x.fact += l.total;
+    const u = unidadNegocio(l.modalidad); x.reparto[u] = (x.reparto[u] || 0) + l.total;
+  });
+  const lista = Object.values(porCliente).map(x => Object.assign(x, {
+    unidades: ["Depósito","Cantera","Obra"].filter(u => x.fact && (x.reparto[u] || 0) / x.fact >= 0.05) }))
+    .sort((a,b) => b.fact - a.fact);
+  return { lista, fact: lista.reduce((s,x) => s + x.fact, 0), historiaDesde };
+}
+
 function renderComision(){
   const cont = document.getElementById("comisionCont");
   if(!COMISION.length){
     cont.innerHTML = `<div class="vacio">Todavía no hay facturación atribuida a Franco para calcular comisión.</div>`;
   } else {
-    const ultimo = COMISION[COMISION.length-1];
-    const mesNombre = MESES_LARGO[ultimo.mes]||ultimo.mes;
-    let extra = "";
-    if(COMISION.length>1){
-      const previos = COMISION.slice(0,-1).map(m=>{
-        const nombre = MESES_LARGO[m.mes]||m.mes;
-        return `<div class="comision__item"><dt>${nombre} ${m.anio}</dt><dd>${moneda(m.totalACobrar)}</dd></div>`;
-      }).join("");
-      extra = `<div class="comision__grid">${previos}</div>`;
-    }
-    cont.innerHTML = `
-      <div class="comision">
-        <div class="comision__label">Comisión estimada — ${mesNombre} ${ultimo.anio}</div>
-        <div class="comision__monto">${moneda(ultimo.totalACobrar)}</div>
-        <div class="comision__sub">Sobre facturación atribuida de ${moneda(ultimo.facturacion)} (clientes con Oportunidad Ganado de Franco en el CRM, facturen quien facturen — o pedidos que Franco cargó él mismo, aunque el cliente no tenga Oportunidad todavía), tramo ${ultimo.tramo} (${(ultimo.porcentaje*100).toFixed(1)}%)</div>
-        <div class="comision__grid">
-          <div class="comision__item"><dt>Facturación del mes</dt><dd>${moneda(ultimo.facturacion)}</dd></div>
-          <div class="comision__item"><dt>Comisión variable</dt><dd>${moneda(ultimo.comisionVariable)}</dd></div>
-          <div class="comision__item"><dt>Básico fijo</dt><dd>${moneda(ultimo.basicoFijo)}</dd></div>
+    // Un renglón por mes, del más nuevo al más viejo: fijo + variable = total.
+    const mesActual = claveMesRs(new Date().getFullYear(), new Date().getMonth()+1);
+    const pct = p => (p*100).toLocaleString("es-AR", {maximumFractionDigits:1}) + "%";
+    cont.innerHTML = COMISION.slice().reverse().map(m=>{
+      const enCurso = claveMesRs(m.anio, m.mes) === mesActual;
+      const proximo = TRAMOS_COMISION.find(t => m.facturacion <= t.hasta && t.siguiente);
+      const falta = proximo ? `Le faltan <b>${moneda(proximo.hasta - m.facturacion)}</b> para superar ${monedaCorta(proximo.hasta)} y pasar al ${pct(proximo.siguiente)} sobre todo el mes.` : "";
+      return `<div class="cobro-mes${enCurso ? " cobro-mes--curso" : ""}">
+        <div class="cobro-mes__titulo">${MESES_LARGO[m.mes]} ${m.anio} <span class="rs-chip"${enCurso ? "" : ` style="background:var(--crema);color:var(--texto-sec)"`}>${enCurso ? "mes en curso" : "mes cerrado"}</span></div>
+        <div class="cobro-mes__cuenta">
+          <div><span>Fijo</span><b>${moneda(m.basicoFijo)}</b></div>
+          <div class="cobro-mes__op">+</div>
+          <div><span>Comisiones · ${pct(m.porcentaje)} sobre ${moneda(m.facturacion)} facturados</span><b>${moneda(m.comisionVariable)}</b></div>
+          <div class="cobro-mes__op">=</div>
+          <div class="cobro-mes__total"><span>${enCurso ? "Total hasta hoy" : "Total del mes"}</span><b>${moneda(m.totalACobrar)}</b></div>
         </div>
-        ${extra?`<div class="seccion-titulo" style="margin-top:22px;">Meses anteriores</div>${extra}`:""}
+        ${enCurso && falta ? `<div class="cobro-mes__nota">${falta}</div>` : ""}
       </div>`;
+    }).join("") + `<div class="rs-nota" style="margin-top:0">Facturación atribuida: clientes con Oportunidad Ganada de Franco en el CRM (facture quien facture) y pedidos que cargó él. Tramos: hasta $18M 2,5% · hasta $30M 3% · más de $30M 3,5%, sobre todo lo facturado en el mes.</div>`;
   }
 
   const sinCruzarCont = document.getElementById("sinCruzarCont");
@@ -1341,13 +1507,22 @@ function renderComision(){
   const pct = totalEmpresaMismoPeriodo ? (total/totalEmpresaMismoPeriodo*100).toFixed(1) : "—";
   const pedidos = new Set(deFranco.map(l=>l.sistema+"|"+l.referencia)).size;
   const clientes = new Set(deFranco.map(l=>l.cliente)).size;
+  const nuevosF = clientesNuevosFranco(deFranco);
   document.getElementById("francoKpis").innerHTML = `
     <div class="kpi"><div class="kpi__label">% sobre facturación de empresa</div><div class="kpi__valor">${pct}${pct!=="—"?"%":""}</div>
       <div class="kpi__sub">para el período y modalidad seleccionados</div></div>
     <div class="kpi"><div class="kpi__label">Pedidos atribuidos</div><div class="kpi__valor">${pedidos}</div></div>
     <div class="kpi"><div class="kpi__label">Clientes atribuidos</div><div class="kpi__valor">${clientes}</div></div>
     <div class="kpi"><div class="kpi__label">Facturación atribuida</div><div class="kpi__valor">${moneda(total)}</div></div>
+    <div class="kpi"><div class="kpi__label">Clientes nuevos que trajo</div><div class="kpi__valor">${nuevosF.lista.length}</div>
+      <div class="kpi__sub">${moneda(nuevosF.fact)} · ${total ? Math.round(nuevosF.fact / total * 100) : 0}% de su facturación</div></div>
   `;
+  const itemsNuevos = nuevosF.lista.map(x => `<li><div><div class="rs-lista__nombre">${escaparRs(x.nombre)}</div>
+      <div class="rs-lista__detalle">${x.unidades.join(" + ")} · primera compra el ${fechaDiaRs(x.primera)}</div></div>
+      <div class="rs-lista__monto">${moneda(x.fact)}</div></li>`).join("");
+  document.getElementById("francoNuevosCont").innerHTML = `<h3>★ Clientes nuevos que trajo Franco</h3>
+    <div class="panel__sub">Clientes suyos que compraron por primera vez desde que arrancó (31/08), según los filtros de esta pestaña · "nuevo" = sin compras previas desde el ${fechaDiaRs(nuevosF.historiaDesde)}, que es desde cuando hay datos</div>
+    ${itemsNuevos ? `<ul class="rs-lista">${itemsNuevos}</ul>` : `<div class="rs-vacio">Ninguno en este período.</div>`}`;
 
   renderTopClientesGestion(deFranco);
   renderEmbudo();
@@ -1610,6 +1785,7 @@ async function cargar(){
     EMBUDO = data.embudoFranco || null;
     PEDIDOS_FRANCO_SIN_OPORTUNIDAD = data.pedidosFrancoSinOportunidad || [];
     PEDIDOS_FRANCO_CON_OPORTUNIDAD_PENDIENTE = data.pedidosFrancoConOportunidadPendiente || [];
+    COMPRAS_INSUMOS = data.comprasInsumos || [];
 
     document.getElementById("contenido").innerHTML = `
       <div class="pestana activa" id="pestana-mes"></div>
@@ -1690,7 +1866,6 @@ async function cargar(){
       </div>
 
       <div class="pestana" id="pestana-franco">
-        <div id="comisionCont"></div>
         <div id="sinCruzarCont"></div>
         <div class="seccion-titulo">Desempeño comercial</div>
         <div class="filtros">
@@ -1702,6 +1877,7 @@ async function cargar(){
               <option value="Entrega en Obra">Entrega en Obra</option></select></div>
         </div>
         <div class="kpis" id="francoKpis"></div>
+        <div class="panel panel--full" id="francoNuevosCont"></div>
         <div class="paneles paneles--2">
           <div class="panel">
             <h3>Top 10 clientes por facturación</h3>
@@ -1719,6 +1895,30 @@ async function cargar(){
           <div class="panel__sub">Todas las oportunidades de Franco en el CRM, por etapa — mide su gestión, no solo lo que factura</div>
           <div id="embudoCont"></div>
         </div>
+        <div class="seccion-titulo">Fijo + comisiones</div>
+        <div id="comisionCont"></div>
+      </div>
+
+      <div class="pestana" id="pestana-cobros">
+        <div class="seccion-titulo">¿Cómo se paga lo que se vende?</div>
+        <div class="filtros">
+          <div class="filtros__grupo"><label for="fCobrosMes">Mes</label><select id="fCobrosMes"></select></div>
+        </div>
+        <div class="kpis" id="cobrosKpis"></div>
+        <div class="panel panel--full">
+          <h3>Contado y "Cuenta de cliente", mes a mes</h3>
+          <div class="panel__sub" id="cobrosAlcance"></div>
+          <canvas id="chartCobros"></canvas>
+        </div>
+        <div class="paneles paneles--2">
+          <div class="panel"><h3>Por unidad de negocio</h3><div class="panel__sub">Ventas del punto de venta en el mes elegido</div><div id="cobrosUnidades"></div></div>
+          <div class="panel"><h3>Clientes que más compran a cuenta</h3><div class="panel__sub">Vendido con "Cuenta de cliente" en el mes elegido (no es lo que deben hoy)</div><div id="cobrosClientes"></div></div>
+        </div>
+      </div>
+
+      <div class="pestana" id="pestana-compras">
+        <div class="seccion-titulo">Insumos que se compran para revender</div>
+        <div id="insumosCont"></div>
       </div>
 
       <div class="pestana" id="pestana-alertas">
@@ -1751,6 +1951,7 @@ async function cargar(){
     renderAlerta();
     renderTendencia();
     renderResumenMes();
+    prepararCobros(data.permisos);
 
     ["fMes","fVendedor","fModalidad"].forEach(id=>{
       document.getElementById(id).addEventListener("change", renderResumen);
