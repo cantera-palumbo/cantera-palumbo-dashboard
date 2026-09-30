@@ -179,6 +179,13 @@
   .fz-tabla .num{text-align:right; white-space:nowrap;}
   .fz-tabla tr.fz-mejor td{background:#eef5e6;}
   .fz-scroll{overflow-x:auto;}
+  /* Tabla larga: se desplaza adentro de su caja, con encabezado y primera columna fijos. */
+  .fz-fija{overflow:auto; max-height:520px; border:1px solid var(--linea); border-radius:10px;}
+  .fz-fija .fz-tabla th{position:sticky; top:0; background:#fff; z-index:2; box-shadow:0 2px 0 var(--linea); border-bottom:0;}
+  .fz-fija .fz-tabla td:first-child, .fz-fija .fz-tabla th:first-child{position:sticky; left:0; background:#fff; z-index:1; box-shadow:2px 0 0 var(--linea); white-space:nowrap;}
+  .fz-fija .fz-tabla th:first-child{z-index:3;}
+  .fz-fija .fz-tabla tbody tr:nth-child(even) td{background:#faf9f6;}
+  .fz-fija .fz-tabla tbody tr:hover td{background:#eef2e6;}
   .rs-cerrado{display:grid; grid-template-columns:repeat(4,1fr); gap:14px;}
   .rs-cerrado__item{background:#fff; border-radius:8px; padding:12px 16px; box-shadow:var(--sombra-chica); display:flex; flex-direction:column; gap:6px; font-size:18px;}
   .rs-cerrado__nombre{font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.06em; color:var(--texto-sec);}
@@ -304,9 +311,9 @@
       <button class="tab activo" data-tab="mes"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/></svg><span>Resumen del mes</span></button>
       <button class="tab" data-tab="resumen"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="12" width="4" height="9" rx="1"/><rect x="10" y="7" width="4" height="14" rx="1"/><rect x="17" y="3" width="4" height="18" rx="1"/></svg><span>Resumen empresa</span></button>
       <button class="tab" data-tab="cliente"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span>Buscar cliente</span></button>
-      <button class="tab" data-tab="alertas"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 2 20h20L12 3z"/><path d="M12 10v4"/><path d="M12 17h.01"/></svg><span>Alertas</span><span class="contador" id="contadorAlertas" style="display:none;"></span></button>
     <div class="sidebar__grupo">Comercial</div>
       <button class="tab" data-tab="franco"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg><span>Gestión Vendedor</span></button>
+      <button class="tab" data-tab="alertas"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 2 20h20L12 3z"/><path d="M12 10v4"/><path d="M12 17h.01"/></svg><span>Alertas</span><span class="contador" id="contadorAlertas" style="display:none;"></span></button>
     <div class="sidebar__grupo" id="grupoGerencia" style="display:none;">Gerencia</div>
       <button class="tab" data-tab="cobros" id="tabCobros" style="display:none;"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="6" width="20" height="13" rx="2"/><path d="M2 10h20"/><path d="M6 15h4"/></svg><span>Cobros</span></button>
       <button class="tab" data-tab="compras" id="tabCompras" style="display:none;"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 4h2l2.5 11h11L21 7H6.2"/><circle cx="9" cy="19.5" r="1.5"/><circle cx="17" cy="19.5" r="1.5"/></svg><span>Compras</span></button>
@@ -930,7 +937,7 @@ function renderCobros(){
     <div class="kpi"><div class="kpi__label">Pedidos de venta</div><div class="kpi__valor">${monedaCorta(s["Pedido de venta"] || 0)}</div><div class="kpi__sub">Odoo no registra cómo se pagan</div></div>`;
   const sinDato = s["Sin dato"] || 0;
   document.getElementById("cobrosAlcance").textContent = "Ventas del punto de venta según el medio de pago que registra Odoo. Los pedidos de venta van aparte, en gris, porque Odoo no guarda cómo se pagaron." +
-    (sinDato ? ` Hay ${monedaCorta(sinDato)} del punto de venta todavía sin medio de pago (se completa con la próxima actualización diaria).` : "");
+    (sinDato ? ` Hay ${monedaCorta(sinDato)} del punto de venta sin medio de pago registrado.` : "");
 
   const grupos = GRUPOS_COBRO.filter(g => meses.some(m => suma[m] && suma[m][g]));
   if(chartCobros) chartCobros.destroy();
@@ -964,7 +971,7 @@ function renderCobros(){
 function renderInsumos(){
   const cont = document.getElementById("insumosCont");
   if(!COMPRAS_INSUMOS.length){
-    cont.innerHTML = `<div class="panel panel--full"><div class="rs-vacio">Todavía no hay compras de insumos cargadas. Aparecen después de la próxima actualización diaria desde Odoo.</div></div>`;
+    cont.innerHTML = `<div class="panel panel--full"><div class="rs-vacio">Todavía no hay compras de insumos registradas.</div></div>`;
     return;
   }
   const insumos = [...new Set(COMPRAS_INSUMOS.map(c => c.insumo))];
@@ -1039,8 +1046,8 @@ function renderPrecios(){
     const ant = promedioDe(LINEAS.filter(l => claveMesLinea(l) === mesAnt && (unidad === "todas" || unidadNegocio(l.modalidad) === unidad) && lineaConPrecio(l) && l.precioUnitario > 1 && normProducto(l.producto) === p));
     return { p, q, prom: promedioDe(arr), min, max, ant };
   }).sort((a,b) => b.q - a.q);
-  document.getElementById("preciosCobradoSub").textContent = `Precio unitario de cada venta (sin IVA), promedio ponderado por m³ · ${nombreMesRs(mes, true)}${unidad === "todas" ? "" : " · " + unidad}` +
-    (aUnPeso ? ` · ${aUnPeso} ventas quedaron a $1 (precio sin cargar) y no se cuentan` : "");
+  document.getElementById("preciosCobradoSub").textContent = `Precio por m³ cobrado · ${nombreMesRs(mes, true)} · ${unidad}` +
+    (aUnPeso ? ` · ${aUnPeso} ventas figuran a $1 en Odoo y no se incluyen` : "");
   document.getElementById("preciosCobrado").innerHTML = filas.length ? `<div class="fz-scroll"><table class="fz-tabla"><thead><tr><th>Producto</th><th class="num">m³</th><th class="num">Promedio</th><th class="num">vs ${nombreMesRs(mesAnt)}</th><th class="num">Más bajo</th><th class="num">Más alto</th></tr></thead><tbody>${
     filas.map(f => `<tr><td><b>${escaparRs(f.p)}</b></td><td class="num">${f.q.toLocaleString("es-AR", {maximumFractionDigits:1})}</td><td class="num"><b>${moneda(f.prom)}</b></td>
       <td class="num">${f.ant ? chipVarRs(variacionRs(f.prom, f.ant), nombreMesRs(mesAnt)) : "—"}</td>
@@ -1095,15 +1102,23 @@ function renderPreciosVigentes(){
   const hoy = new Date().toISOString();
   const vigentes = LISTAS_PRECIOS.filter(r => r.tipo === "fixed" && (!r.desde || r.desde <= hoy) && (!r.hasta || r.hasta >= hoy));
   const orden = ["ARENA DE ANCHORIS","RIPIO","ESTABILIZADO","TIERRA DE EMBANQUE","NUCLEO","PIEDRA BOLA","ARENA FINA"];
-  const prods = [...new Set(vigentes.map(r => normProducto(r.producto)))].sort((a,b) => (orden.indexOf(a) + 1 || 99) - (orden.indexOf(b) + 1 || 99));
-  const listas = [...new Set(vigentes.map(r => r.lista))].sort();
+  // Bolsones y flete van aparte: solo los tienen un par de listas y ensanchan la tabla principal.
+  const esOtro = p => /BOLS|FLETE/.test(p);
+  const granel = vigentes.filter(r => !esOtro(normProducto(r.producto)));
+  const prods = [...new Set(granel.map(r => normProducto(r.producto)))].sort((a,b) => (orden.indexOf(a) + 1 || 99) - (orden.indexOf(b) + 1 || 99));
+  const listas = [...new Set(granel.map(r => r.lista))].sort();
+  const sinARS = l => l.replace(/\s*\(ARS\)$/, "");
+  const otros = vigentes.filter(r => esOtro(normProducto(r.producto))).sort((a,b) => a.lista.localeCompare(b.lista) || a.producto.localeCompare(b.producto));
+  document.getElementById("preciosOtros").innerHTML = otros.length ? `<div class="fz-scroll"><table class="fz-tabla"><thead><tr><th>Lista</th><th>Producto</th><th class="num">Precio</th></tr></thead><tbody>${
+    otros.map(r => `<tr><td><b>${escaparRs(sinARS(r.lista))}</b></td><td>${escaparRs(r.producto)}${r.minimo > 1 ? ` <small style="color:var(--texto-sec)">(desde ${r.minimo})</small>` : ""}</td><td class="num">${moneda(r.precio)}</td></tr>`).join("")
+  }</tbody></table></div>` : `<div class="rs-vacio">Ninguna lista tiene precios de bolsones o flete.</div>`;
   const celda = (lista, p) => {
     const rs = vigentes.filter(r => r.lista === lista && normProducto(r.producto) === p).sort((a,b) => a.minimo - b.minimo);
     return rs.length ? rs.map((r,i) => i === 0 && r.minimo <= 1 ? moneda(r.precio) : `<small style="color:var(--texto-sec)">desde ${r.minimo}:</small> ${moneda(r.precio)}`).join("<br>") : `<span style="color:var(--texto-sec)">—</span>`;
   };
-  document.getElementById("preciosVigentes").innerHTML = listas.length ? `<div class="fz-scroll"><table class="fz-tabla"><thead><tr><th>Lista</th>${prods.map(p => `<th class="num">${escaparRs(p)}</th>`).join("")}</tr></thead><tbody>${
-    listas.map(l => `<tr><td><b>${escaparRs(l.replace(/\s*\(ARS\)$/, ""))}</b></td>${prods.map(p => `<td class="num">${celda(l, p)}</td>`).join("")}</tr>`).join("")
-  }</tbody></table></div>` : `<div class="rs-vacio">Todavía no hay listas cargadas. Aparecen después de la próxima actualización diaria desde Odoo.</div>`;
+  document.getElementById("preciosVigentes").innerHTML = listas.length ? `<div class="fz-fija"><table class="fz-tabla"><thead><tr><th>Lista</th>${prods.map(p => `<th class="num">${escaparRs(p)}</th>`).join("")}</tr></thead><tbody>${
+    listas.map(l => `<tr><td><b>${escaparRs(sinARS(l))}</b></td>${prods.map(p => `<td class="num">${celda(l, p)}</td>`).join("")}</tr>`).join("")
+  }</tbody></table></div>` : `<div class="rs-vacio">No hay listas de precios cargadas en Odoo.</div>`;
 }
 
 // ---------- Tabs ----------
@@ -1595,7 +1610,7 @@ function renderComision(){
     bloques.push(`<div class="alerta" style="margin-bottom:16px;">
       <div class="alerta__cabecera"><span class="alerta__numero">${EMPRESAS_SIN_CRUZAR.length}</span>
       <span class="alerta__titulo">empresas Ganado de Franco que no encontré en Ventas/POS</span></div>
-      <p class="alerta__texto">Están cargadas como Ganado en el CRM pero el nombre no matcheó con ningún Cliente de Ventas o POS — revisá si están escritas distinto entre sistemas.</p>
+      <p class="alerta__texto">Están cargadas como Ganado en el CRM pero el nombre no coincide con ningún cliente de Ventas o del punto de venta — revisá si están escritas distinto entre sistemas.</p>
       <div style="font-size:13px; line-height:1.9;">${EMPRESAS_SIN_CRUZAR.map(e=>`• ${e}`).join("<br>")}</div>
     </div>`);
   }
@@ -1668,7 +1683,7 @@ function renderComision(){
       <div class="rs-lista__detalle">${x.unidades.join(" + ")} · primera compra el ${fechaDiaRs(x.primera)}</div></div>
       <div class="rs-lista__monto">${moneda(x.fact)}</div></li>`).join("");
   document.getElementById("francoNuevosCont").innerHTML = `<h3>★ Clientes nuevos que trajo Franco</h3>
-    <div class="panel__sub">Clientes suyos que compraron por primera vez desde que arrancó (31/08), según los filtros de esta pestaña · "nuevo" = sin compras previas desde el ${fechaDiaRs(nuevosF.historiaDesde)}, que es desde cuando hay datos</div>
+    <div class="panel__sub">Clientes que compraron por primera vez desde que arrancó Franco (31/08)</div>
     ${itemsNuevos ? `<ul class="rs-lista">${itemsNuevos}</ul>` : `<div class="rs-vacio">Ninguno en este período.</div>`}`;
 
   renderTopClientesGestion(deFranco);
@@ -1962,7 +1977,7 @@ async function cargar(){
         </div>
         <div class="panel" style="margin-bottom:24px;">
           <h3>Evolución mensual de facturación</h3>
-          <div class="panel__sub">Ventas + Punto de Venta, todos los meses (no depende de los filtros)</div>
+          <div class="panel__sub">Pedidos de venta y punto de venta, todos los meses</div>
           <canvas id="chartTendencia"></canvas>
         </div>
         <div class="paneles">
@@ -1980,7 +1995,7 @@ async function cargar(){
         </div>
         <div class="panel panel--full">
           <h3>Cantidad vendida (m³ / bolsón / unidad)</h3>
-          <div class="panel__sub">Separado por unidad de medida — nunca se mezcla m³ con bolsones</div>
+          <div class="panel__sub">Por unidad de medida</div>
           <div class="kpis" id="kpisCantidad" style="margin-bottom:0;"></div>
         </div>
         <div class="panel panel--full">
@@ -1994,7 +2009,7 @@ async function cargar(){
         </div>
         <div class="panel panel--full">
           <h3>Estacionalidad</h3>
-          <div class="panel__sub">Qué se vende más y cuándo — no depende del filtro de Mes (necesita ver todos los meses juntos)</div>
+          <div class="panel__sub">Qué se vende más y cuándo, en todos los meses</div>
           <div class="panel__toggle">
             <button class="activo" id="btnEstMes" onclick="cambiarVistaEstacionalidad('mes')">Por mes</button>
             <button id="btnEstDia" onclick="cambiarVistaEstacionalidad('dia')">Por día de la semana</button>
@@ -2009,7 +2024,7 @@ async function cargar(){
           </div>
           <div class="panel">
             <h3>En cantidad de pedidos</h3>
-            <div class="panel__sub">Conteo de pedidos, no de m³ — para no mezclar unidades distintas</div>
+            <div class="panel__sub">En cantidad de pedidos</div>
             <canvas id="chartCatClientePedidos"></canvas>
           </div>
         </div>
@@ -2036,7 +2051,7 @@ async function cargar(){
           </div>
           <div class="panel">
             <h3>Top 10 clientes por volumen</h3>
-            <div class="panel__sub">Solo metros cúbicos: no incorpora bolsones ni unidades</div>
+            <div class="panel__sub">En m³</div>
             <canvas id="chartGestionClientesM3"></canvas>
           </div>
         </div>
@@ -2075,7 +2090,7 @@ async function cargar(){
         <div class="filtros">
           <div class="filtros__grupo"><label for="fPreciosMes">Mes</label><select id="fPreciosMes"></select></div>
           <div class="filtros__grupo"><label for="fPreciosUnidad">Unidad de negocio</label>
-            <select id="fPreciosUnidad"><option value="todas">Todas</option><option>Cantera</option><option>Depósito</option><option>Obra</option></select></div>
+            <select id="fPreciosUnidad"><option>Depósito</option><option>Cantera</option><option>Obra</option></select></div>
         </div>
         <div class="seccion-titulo">Precio realmente cobrado por m³</div>
         <div class="panel panel--full"><div class="panel__sub" id="preciosCobradoSub"></div><div id="preciosCobrado"></div></div>
@@ -2083,9 +2098,10 @@ async function cargar(){
         <div class="kpis" id="preciosListaKpis"></div>
         <div class="panel panel--full"><h3>Ventas por debajo de la lista usada</h3><div class="panel__sub">Precio cobrado menor al que dice la lista elegida en la venta, para ese producto y esa cantidad</div><div id="preciosDebajo"></div></div>
         <div class="seccion-titulo">Lista usada en la venta vs lista asignada al cliente</div>
-        <div class="panel panel--full"><div class="panel__sub">Clientes a los que se les aplicó una lista distinta de la que tienen en su ficha de Odoo. Solo lo muestra: si fue acordado o no, lo decide la empresa.</div><div id="preciosListas"></div></div>
+        <div class="panel panel--full"><div class="panel__sub">Clientes a los que se les aplicó una lista distinta de la que tienen en su ficha de Odoo.</div><div id="preciosListas"></div></div>
         <div class="seccion-titulo">Precios vigentes por lista (hoy, en Odoo)</div>
-        <div class="panel panel--full"><div id="preciosVigentes"></div></div>
+        <div class="panel panel--full"><h3>Áridos a granel ($ por m³)</h3><div id="preciosVigentes"></div></div>
+        <div class="panel panel--full"><h3>Bolsones y flete</h3><div class="panel__sub">Precios por unidad, en las listas que los tienen</div><div id="preciosOtros"></div></div>
       </div>
 
       <div class="pestana" id="pestana-alertas">
@@ -2132,7 +2148,7 @@ async function cargar(){
 
   } catch(err){
     document.getElementById("contenido").innerHTML =
-      `<div class="estado error">No se pudo leer la Base (${err.message}). Revisá que el Apps Script siga implementado y accesible, o recargá la página.</div>`;
+      `<div class="estado error">No se pudo leer la Base (${err.message}). Recargá la página; si sigue pasando, avisá a quien administra el panel.</div>`;
   }
 }
 cargar();
