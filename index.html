@@ -257,6 +257,16 @@
   .alerta__numero{font-size:36px; font-weight:900;}
   .alerta__titulo{font-size:16px; font-weight:700;}
   .alerta__texto{font-size:13.5px; color:#4a4840; max-width:64ch; margin-bottom:18px;}
+  .al-resumen{display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:14px; margin-bottom:22px;}
+  .al-chip{background:var(--negro); color:var(--crema); border-radius:14px; padding:16px 20px; display:flex; align-items:center; gap:14px; box-shadow:var(--sombra-chica);}
+  .al-chip b{font-size:30px; font-weight:900; color:var(--verde-claro); line-height:1;}
+  .al-chip span{font-size:12.5px; font-weight:600; color:#b9b6a9; line-height:1.25;}
+  .al-bloque{background:#fff; border:1px solid var(--linea); border-radius:14px; box-shadow:var(--sombra-chica); padding:22px 24px 14px; margin-bottom:20px;}
+  .al-cabecera{display:flex; align-items:center; gap:14px; margin-bottom:14px;}
+  .al-cabecera h3{font-size:16px; font-weight:800;}
+  .al-numero{flex-shrink:0; min-width:38px; height:38px; padding:0 10px; border-radius:20px; background:#c58a14; color:#fff; font-size:17px; font-weight:900; display:flex; align-items:center; justify-content:center;}
+  .al-accion{background:#f8efd9; border-radius:10px; padding:12px 16px; font-size:13.5px; color:#4a4030; line-height:1.5; margin-bottom:14px;}
+  .al-accion b{display:block; font-size:10.5px; text-transform:uppercase; letter-spacing:.08em; color:#8a6410; margin-bottom:3px;}
   .oportunidad{padding:14px 0; border-top:1px solid var(--linea); display:grid; grid-template-columns:1fr auto; gap:4px 16px;}
   .oportunidad__nombre{font-weight:700; font-size:14px;}
   .oportunidad__empresa{font-size:12px; color:var(--texto-sec);}
@@ -1703,33 +1713,39 @@ function renderAlerta(){
   document.getElementById("contadorAlertas").style.display = totalAlertas ? "inline-block" : "none";
   document.getElementById("contadorAlertas").textContent = totalAlertas;
 
-  // Tres pendientes de CRM, cada uno con qué pasa y qué hacer. Solo se muestran los que tienen casos.
-  const bloque = (n, titulo, queHacer, filas) => `<div class="alerta" style="margin-bottom:20px;">
-      <div class="alerta__cabecera"><span class="alerta__numero">${n}</span><span class="alerta__titulo">${titulo}</span></div>
-      <p class="alerta__texto"><b>Qué hacer:</b> ${queHacer}</p>${filas}</div>`;
-  const fila = (nombre, detalle, derecha) => `<div class="oportunidad">
-      <div><div class="oportunidad__nombre">${escaparRs(nombre)}</div><div class="oportunidad__empresa">${detalle}</div></div>
-      <div class="oportunidad__fechas">${derecha}</div></div>`;
-  const bloques = [];
+  // Tres pendientes de CRM. Arriba, un resumen con la cantidad de cada uno; abajo, cada pendiente
+  // con qué hacer y su tabla a todo el ancho. Solo se muestran los que tienen casos.
+  const bloques = [], resumen = [];
+  const bloque = (n, corto, titulo, queHacer, columnas, filas) => {
+    resumen.push(`<div class="al-chip"><b>${n}</b><span>${corto}</span></div>`);
+    bloques.push(`<div class="al-bloque">
+      <div class="al-cabecera"><span class="al-numero">${n}</span><h3>${titulo}</h3></div>
+      <div class="al-accion"><b>Qué hacer</b>${queHacer}</div>
+      <div class="fz-scroll"><table class="fz-tabla"><thead><tr>${columnas.map((c,i) => `<th${i === columnas.length - 1 ? ' class="num"' : ""}>${c}</th>`).join("")}</tr></thead>
+      <tbody>${filas.map(f => `<tr>${f.map((v,i) => `<td${i === f.length - 1 ? ' class="num"' : ""}>${i === 0 ? `<b>${v}</b>` : v}</td>`).join("")}</tr>`).join("")}</tbody></table></div>
+    </div>`);
+  };
 
   // 1) Ganadas en el CRM sin ninguna venta a ese cliente.
   if(GANADO.length){
-    bloques.push(bloque(GANADO.length,
-      GANADO.length === 1 ? "oportunidad ganada que todavía no tiene ventas" : "oportunidades ganadas que todavía no tienen ventas",
-      "están como Ganado en el CRM, pero no hay ninguna venta a ese cliente. Cargar el pedido o, si ya compró, revisar que el nombre del cliente sea el mismo en el CRM y en Ventas.",
-      GANADO.map(o => fila(o.empresa || o.oportunidad || "(sin nombre)",
-        `Ganada el ${fechaCorta(o.fechaCierre)}${o.notas && o.notas.trim() ? " · " + escaparRs(o.notas) : ""}`,
-        o.ingresosEsperados ? moneda(o.ingresosEsperados) + "<br>esperado" : "")).join("")));
+    bloque(GANADO.length, "ganadas sin ventas",
+      GANADO.length === 1 ? "Oportunidad ganada que todavía no tiene ventas" : "Oportunidades ganadas que todavía no tienen ventas",
+      "Están como Ganado en el CRM, pero no hay ninguna venta a ese cliente. Cargar el pedido o, si ya compró, revisar que el nombre del cliente sea el mismo en el CRM y en Ventas.",
+      ["Cliente", "Ganada el", "Notas", "Monto esperado"],
+      GANADO.map(o => [escaparRs(o.empresa || o.oportunidad || "(sin nombre)"), fechaCorta(o.fechaCierre),
+        o.notas && o.notas.trim() ? escaparRs(o.notas) : `<span style="color:var(--texto-sec)">Sin notas</span>`,
+        o.ingresosEsperados ? moneda(o.ingresosEsperados) : "—"]));
   }
 
   // 2) Ventas de Franco a clientes sin oportunidad en el CRM (ya cuentan para su comisión).
   if(PEDIDOS_FRANCO_SIN_OPORTUNIDAD.length){
-    const total = PEDIDOS_FRANCO_SIN_OPORTUNIDAD.reduce((s,p) => s + p.total, 0);
-    bloques.push(bloque(PEDIDOS_FRANCO_SIN_OPORTUNIDAD.length,
-      PEDIDOS_FRANCO_SIN_OPORTUNIDAD.length === 1 ? "venta de Franco sin oportunidad en el CRM" : "ventas de Franco sin oportunidad en el CRM",
-      `crear la oportunidad en el CRM y marcarla Ganado. ${PEDIDOS_FRANCO_SIN_OPORTUNIDAD.length === 1 ? "Esta venta" : "Estas ventas"} (${moneda(total)}) ya ${PEDIDOS_FRANCO_SIN_OPORTUNIDAD.length === 1 ? "suma" : "suman"} a su comisión.`,
+    const total = PEDIDOS_FRANCO_SIN_OPORTUNIDAD.reduce((s,p) => s + p.total, 0), uno = PEDIDOS_FRANCO_SIN_OPORTUNIDAD.length === 1;
+    bloque(PEDIDOS_FRANCO_SIN_OPORTUNIDAD.length, "ventas sin oportunidad",
+      uno ? "Venta de Franco sin oportunidad en el CRM" : "Ventas de Franco sin oportunidad en el CRM",
+      `Crear la oportunidad en el CRM y marcarla Ganado. ${uno ? "Esta venta" : "Estas ventas"} (${moneda(total)}) ya ${uno ? "suma" : "suman"} a su comisión.`,
+      ["Cliente", "Pedido", "Fecha", "Monto"],
       PEDIDOS_FRANCO_SIN_OPORTUNIDAD.slice().sort((a,b) => new Date(b.fecha) - new Date(a.fecha))
-        .map(p => fila(p.cliente, `Pedido ${escaparRs(p.referencia)} · ${fechaCorta(p.fecha)}`, moneda(p.total))).join("")));
+        .map(p => [escaparRs(p.cliente), escaparRs(p.referencia), fechaCorta(p.fecha), moneda(p.total)]));
   }
 
   // 3) Clientes que ya le compraron a Franco pero con la oportunidad todavía abierta.
@@ -1740,14 +1756,16 @@ function renderAlerta(){
       c.total += p.total; c.refs.add(p.sistema + "|" + p.referencia);
     });
     const n = Object.keys(porCliente).length;
-    bloques.push(bloque(n,
-      n === 1 ? "cliente que ya compró, con la oportunidad todavía abierta" : "clientes que ya compraron, con la oportunidad todavía abierta",
-      "pasar la oportunidad a Ganado en el CRM: el cliente ya hizo su pedido.",
+    bloque(n, "oportunidades por cerrar",
+      n === 1 ? "Cliente que ya compró, con la oportunidad todavía abierta" : "Clientes que ya compraron, con la oportunidad todavía abierta",
+      "Pasar la oportunidad a Ganado en el CRM: el cliente ya hizo su pedido.",
+      ["Cliente", "Etapa en el CRM", "Pedidos", "Monto"],
       Object.entries(porCliente).sort((a,b) => b[1].total - a[1].total)
-        .map(([c,d]) => fila(c, `Etapa en el CRM: ${escaparRs(d.estado)} · ${d.refs.size === 1 ? "1 pedido" : d.refs.size + " pedidos"}`, moneda(d.total))).join("")));
+        .map(([c,d]) => [escaparRs(c), `<span class="rs-chip" style="margin:0">${escaparRs(d.estado)}</span>`, d.refs.size, moneda(d.total)]));
   }
 
-  cont.innerHTML = bloques.length ? bloques.join("")
+  cont.innerHTML = bloques.length
+    ? `<div class="al-resumen">${resumen.join("")}</div>${bloques.join("")}`
     : `<div class="vacio">Todo en orden: no hay pendientes del CRM. 👍</div>`;
 }
 
