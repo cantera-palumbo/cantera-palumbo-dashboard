@@ -1640,59 +1640,7 @@ function renderComision(){
     }).join("") + `<div class="rs-nota" style="margin-top:0">Facturación atribuida: clientes con Oportunidad Ganada de Franco en el CRM (facture quien facture) y pedidos que cargó él. Tramos: hasta $18M 2,5% · hasta $30M 3% · más de $30M 3,5%, sobre todo lo facturado en el mes.</div>`;
   }
 
-  const sinCruzarCont = document.getElementById("sinCruzarCont");
-  const bloques = [];
 
-  if(EMPRESAS_SIN_CRUZAR.length){
-    bloques.push(`<div class="alerta" style="margin-bottom:16px;">
-      <div class="alerta__cabecera"><span class="alerta__numero">${EMPRESAS_SIN_CRUZAR.length}</span>
-      <span class="alerta__titulo">empresas Ganado de Franco que no encontré en Ventas/POS</span></div>
-      <p class="alerta__texto">Están cargadas como Ganado en el CRM pero el nombre no coincide con ningún cliente de Ventas o del punto de venta — revisá si están escritas distinto entre sistemas.</p>
-      <div style="font-size:13px; line-height:1.9;">${EMPRESAS_SIN_CRUZAR.map(e=>`• ${e}`).join("<br>")}</div>
-    </div>`);
-  }
-
-  if(PEDIDOS_FRANCO_SIN_OPORTUNIDAD.length){
-    const porCliente = {};
-    PEDIDOS_FRANCO_SIN_OPORTUNIDAD.forEach(p=>{
-      if(!porCliente[p.cliente]) porCliente[p.cliente] = {total:0, referencias:new Set()};
-      porCliente[p.cliente].total += p.total;
-      porCliente[p.cliente].referencias.add(p.sistema+"|"+p.referencia);
-    });
-    const filas = Object.entries(porCliente).sort((a,b)=>b[1].total-a[1].total)
-      .map(([cliente,d])=>`<div class="oportunidad" style="grid-template-columns:1fr auto;">
-        <div class="oportunidad__nombre">${cliente}</div>
-        <div style="text-align:right;"><strong>${moneda(d.total)}</strong><div class="oportunidad__fechas">${d.referencias.size} pedido(s)</div></div>
-      </div>`).join("");
-    bloques.push(`<div class="alerta" style="margin-bottom:16px;">
-      <div class="alerta__cabecera"><span class="alerta__numero">${Object.keys(porCliente).length}</span>
-      <span class="alerta__titulo">clientes que Franco facturó y ya suman a su comisión, pero no tienen su registro en el CRM</span></div>
-      <p class="alerta__texto">Estos pedidos cuentan igual para la comisión — Franco los cargó, así que se vendieron. Falta nada más cargar la Oportunidad correspondiente en el CRM para que quede prolijo, pero la plata ya está sumada.</p>
-      ${filas}
-    </div>`);
-  }
-
-  if(PEDIDOS_FRANCO_CON_OPORTUNIDAD_PENDIENTE.length){
-    const porCliente = {};
-    PEDIDOS_FRANCO_CON_OPORTUNIDAD_PENDIENTE.forEach(p=>{
-      if(!porCliente[p.cliente]) porCliente[p.cliente] = {total:0, referencias:new Set(), estado:p.estadoCRM || "Pendiente"};
-      porCliente[p.cliente].total += p.total;
-      porCliente[p.cliente].referencias.add(p.sistema+"|"+p.referencia);
-    });
-    const filas = Object.entries(porCliente).sort((a,b)=>b[1].total-a[1].total)
-      .map(([cliente,d])=>`<div class="oportunidad" style="grid-template-columns:1fr auto;">
-        <div class="oportunidad__nombre">${cliente}</div>
-        <div style="text-align:right;"><strong>${moneda(d.total)}</strong><div class="oportunidad__fechas">${d.estado} · ${d.referencias.size} pedido(s)</div></div>
-      </div>`).join("");
-    bloques.push(`<div class="alerta" style="margin-bottom:16px;">
-      <div class="alerta__cabecera"><span class="alerta__numero">${Object.keys(porCliente).length}</span>
-      <span class="alerta__titulo">clientes con oportunidad en CRM, pero todavía no marcada como Ganado</span></div>
-      <p class="alerta__texto">El cliente ya está registrado en el CRM. Revisá su etapa antes de marcarla Ganado; estos pedidos no se presentan como clientes sin CRM.</p>
-      ${filas}
-    </div>`);
-  }
-
-  sinCruzarCont.innerHTML = bloques.join("");
 
   const deFranco = filtrarGestion();
   const total = deFranco.reduce((s,l)=>s+l.total,0);
@@ -1755,65 +1703,52 @@ function renderAlerta(){
   document.getElementById("contadorAlertas").style.display = totalAlertas ? "inline-block" : "none";
   document.getElementById("contadorAlertas").textContent = totalAlertas;
 
-  let bloque1;
-  if(!GANADO.length){
-    bloque1 = `<div class="alerta" style="margin-bottom:20px;"><div class="alerta__cabecera"><span class="alerta__numero">0</span>
-      <span class="alerta__titulo">oportunidades ganadas sin pedido vinculado</span></div>
-      <p class="alerta__texto">No hay pendientes — todas las Ganado tienen su pedido cargado en Odoo.</p></div>`;
-  } else {
-    const items = GANADO.map(o=>{
-      const notas = o.notas && o.notas.trim() ? o.notas : "Sin notas de gestión cargadas";
-      const notasClase = o.notas && o.notas.trim() ? "" : "vacia";
-      return `<div class="oportunidad">
-        <div><div class="oportunidad__nombre">${o.oportunidad||"(sin nombre)"}</div>
-        <div class="oportunidad__empresa">${o.empresa||"—"}</div></div>
-        <div class="oportunidad__fechas">Creada ${fechaCorta(o.creadoEl)}<br>Cerrada ${fechaCorta(o.fechaCierre)}</div>
-        <div class="oportunidad__notas ${notasClase}">${notas}</div></div>`;
-    }).join("");
-    bloque1 = `<div class="alerta" style="margin-bottom:20px;"><div class="alerta__cabecera"><span class="alerta__numero">${GANADO.length}</span>
-      <span class="alerta__titulo">oportunidades ganadas sin pedido vinculado</span></div>
-      <p class="alerta__texto">Están marcadas Ganado pero no tienen pedido de venta asociado — Franco tiene que revisarlas.</p>
-      ${items}</div>`;
+  // Tres pendientes de CRM, cada uno con qué pasa y qué hacer. Solo se muestran los que tienen casos.
+  const bloque = (n, titulo, queHacer, filas) => `<div class="alerta" style="margin-bottom:20px;">
+      <div class="alerta__cabecera"><span class="alerta__numero">${n}</span><span class="alerta__titulo">${titulo}</span></div>
+      <p class="alerta__texto"><b>Qué hacer:</b> ${queHacer}</p>${filas}</div>`;
+  const fila = (nombre, detalle, derecha) => `<div class="oportunidad">
+      <div><div class="oportunidad__nombre">${escaparRs(nombre)}</div><div class="oportunidad__empresa">${detalle}</div></div>
+      <div class="oportunidad__fechas">${derecha}</div></div>`;
+  const bloques = [];
+
+  // 1) Ganadas en el CRM sin ninguna venta a ese cliente.
+  if(GANADO.length){
+    bloques.push(bloque(GANADO.length,
+      GANADO.length === 1 ? "oportunidad ganada que todavía no tiene ventas" : "oportunidades ganadas que todavía no tienen ventas",
+      "están como Ganado en el CRM, pero no hay ninguna venta a ese cliente. Cargar el pedido o, si ya compró, revisar que el nombre del cliente sea el mismo en el CRM y en Ventas.",
+      GANADO.map(o => fila(o.empresa || o.oportunidad || "(sin nombre)",
+        `Ganada el ${fechaCorta(o.fechaCierre)}${o.notas && o.notas.trim() ? " · " + escaparRs(o.notas) : ""}`,
+        o.ingresosEsperados ? moneda(o.ingresosEsperados) + "<br>esperado" : "")).join("")));
   }
 
-  let bloque2;
-  if(!PEDIDOS_FRANCO_SIN_OPORTUNIDAD.length){
-    bloque2 = `<div class="alerta"><div class="alerta__cabecera"><span class="alerta__numero">0</span>
-      <span class="alerta__titulo">pedidos de Franco sin Oportunidad Ganado en el CRM</span></div>
-      <p class="alerta__texto">Todo pedido cargado por Franco tiene su oportunidad respaldándolo en el CRM.</p></div>`;
-  } else {
-    const totalMonto = PEDIDOS_FRANCO_SIN_OPORTUNIDAD.reduce((s,p)=>s+p.total,0);
-    const items = PEDIDOS_FRANCO_SIN_OPORTUNIDAD
-      .sort((a,b)=>new Date(b.fecha)-new Date(a.fecha))
-      .map(p=>`<div class="oportunidad">
-        <div><div class="oportunidad__nombre">${p.cliente}</div>
-        <div class="oportunidad__empresa">${p.sistema} — ${p.referencia}</div></div>
-        <div class="oportunidad__fechas">${fechaCorta(p.fecha)}<br>${moneda(p.total)}</div>
-      </div>`).join("");
-    bloque2 = `<div class="alerta"><div class="alerta__cabecera"><span class="alerta__numero">${PEDIDOS_FRANCO_SIN_OPORTUNIDAD.length}</span>
-      <span class="alerta__titulo">pedidos de Franco sin Oportunidad Ganado en el CRM</span></div>
-      <p class="alerta__texto"><strong>Estos SÍ suman a su comisión</strong> — si él cargó el pedido es porque la venta fue suya. Esto es solo un recordatorio de que a esos clientes les falta la oportunidad en el CRM (para que quede prolijo y no dependan de acordarse cada vez que compran de nuevo). Total sin registrar: ${moneda(totalMonto)}.</p>
-      ${items}</div>`;
+  // 2) Ventas de Franco a clientes sin oportunidad en el CRM (ya cuentan para su comisión).
+  if(PEDIDOS_FRANCO_SIN_OPORTUNIDAD.length){
+    const total = PEDIDOS_FRANCO_SIN_OPORTUNIDAD.reduce((s,p) => s + p.total, 0);
+    bloques.push(bloque(PEDIDOS_FRANCO_SIN_OPORTUNIDAD.length,
+      PEDIDOS_FRANCO_SIN_OPORTUNIDAD.length === 1 ? "venta de Franco sin oportunidad en el CRM" : "ventas de Franco sin oportunidad en el CRM",
+      `crear la oportunidad en el CRM y marcarla Ganado. ${PEDIDOS_FRANCO_SIN_OPORTUNIDAD.length === 1 ? "Esta venta" : "Estas ventas"} (${moneda(total)}) ya ${PEDIDOS_FRANCO_SIN_OPORTUNIDAD.length === 1 ? "suma" : "suman"} a su comisión.`,
+      PEDIDOS_FRANCO_SIN_OPORTUNIDAD.slice().sort((a,b) => new Date(b.fecha) - new Date(a.fecha))
+        .map(p => fila(p.cliente, `Pedido ${escaparRs(p.referencia)} · ${fechaCorta(p.fecha)}`, moneda(p.total))).join("")));
   }
 
-  let bloque3 = "";
+  // 3) Clientes que ya le compraron a Franco pero con la oportunidad todavía abierta.
   if(PEDIDOS_FRANCO_CON_OPORTUNIDAD_PENDIENTE.length){
     const porCliente = {};
-    PEDIDOS_FRANCO_CON_OPORTUNIDAD_PENDIENTE.forEach(p=>{
-      if(!porCliente[p.cliente]) porCliente[p.cliente] = {total:0, referencias:new Set(), estado:p.estadoCRM || "Pendiente"};
-      porCliente[p.cliente].total += p.total;
-      porCliente[p.cliente].referencias.add(p.sistema+"|"+p.referencia);
+    PEDIDOS_FRANCO_CON_OPORTUNIDAD_PENDIENTE.forEach(p => {
+      const c = porCliente[p.cliente] = porCliente[p.cliente] || { total:0, refs:new Set(), estado:p.estadoCRM || "Pendiente" };
+      c.total += p.total; c.refs.add(p.sistema + "|" + p.referencia);
     });
-    const filas = Object.entries(porCliente).sort((a,b)=>b[1].total-a[1].total).map(([cliente,d])=>`<div class="oportunidad">
-      <div><div class="oportunidad__nombre">${cliente}</div><div class="oportunidad__empresa">Oportunidad en CRM: ${d.estado}</div></div>
-      <div class="oportunidad__fechas">${d.referencias.size} pedido(s)<br>${moneda(d.total)}</div>
-    </div>`).join("");
-    bloque3 = `<div class="alerta" style="margin-top:20px;"><div class="alerta__cabecera"><span class="alerta__numero">${Object.keys(porCliente).length}</span>
-      <span class="alerta__titulo">clientes con oportunidad pendiente en el CRM</span></div>
-      <p class="alerta__texto">Ya tienen oportunidad registrada; no faltan en CRM. Revisá la etapa para decidir si corresponde pasarla a Ganado.</p>${filas}</div>`;
+    const n = Object.keys(porCliente).length;
+    bloques.push(bloque(n,
+      n === 1 ? "cliente que ya compró, con la oportunidad todavía abierta" : "clientes que ya compraron, con la oportunidad todavía abierta",
+      "pasar la oportunidad a Ganado en el CRM: el cliente ya hizo su pedido.",
+      Object.entries(porCliente).sort((a,b) => b[1].total - a[1].total)
+        .map(([c,d]) => fila(c, `Etapa en el CRM: ${escaparRs(d.estado)} · ${d.refs.size === 1 ? "1 pedido" : d.refs.size + " pedidos"}`, moneda(d.total))).join("")));
   }
 
-  cont.innerHTML = bloque1 + bloque2 + bloque3;
+  cont.innerHTML = bloques.length ? bloques.join("")
+    : `<div class="vacio">Todo en orden: no hay pendientes del CRM. 👍</div>`;
 }
 
 // ================= BUSCADOR DE CLIENTE (autocompletar propio) =================
@@ -2068,7 +2003,6 @@ async function cargar(){
       </div>
 
       <div class="pestana" id="pestana-franco">
-        <div id="sinCruzarCont"></div>
         <div class="seccion-titulo">Desempeño comercial</div>
         <div class="filtros">
           <div class="filtros__grupo"><label for="fGestionMes">Mes</label><select id="fGestionMes"><option value="todos">Todo el historial</option></select></div>
