@@ -348,9 +348,9 @@
       <h2>Revisá tu mail</h2>
       <p id="loginPaso2Texto"></p>
       <label for="loginCodigo">Código</label>
-      <input type="text" id="loginCodigo" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" required>
+      <input type="text" id="loginCodigo" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" required>
       <button type="submit">Entrar</button>
-      <button type="button" class="login__link" onclick="volverAPaso1()">Usar otro mail / pedir otro código</button>
+      <button type="button" class="login__link" onclick="otroCodigo()">Usar otro mail / pedir otro código</button>
     </form>
     <div class="login__msg" id="loginMsg"></div>
   </div>
@@ -376,6 +376,14 @@ const TAMANO_PARTE = 60000; // caracteres por parte al bajar los datos (ver prep
 function leerSesion(){ try{ return localStorage.getItem(CLAVE_SESION); }catch(e){ return null; } }
 function guardarSesion(t){ try{ localStorage.setItem(CLAVE_SESION, t); }catch(e){} }
 function borrarSesion(){ try{ localStorage.removeItem(CLAVE_SESION); }catch(e){} }
+// Pedido de código en curso. En el celu, al ir al mail el navegador puede descartar y recargar esta
+// pestaña; sin esto la persona volvía al paso 1 y tenía que pedir otro código (que invalida el anterior).
+// Se guarda solo el mail y cuándo se pidió: el código nunca se guarda, sigue validándose en el script.
+const CLAVE_PEDIDO = "palumbo_panel_pedido";
+const VIGENCIA_PEDIDO_MS = 15 * 60 * 1000; // menor a lo que dura el código en Acceso.gs (20 minutos)
+function leerPedido(){ try{ const p = JSON.parse(localStorage.getItem(CLAVE_PEDIDO)); return p && p.email ? p : null; }catch(e){ return null; } }
+function guardarPedido(email, mensaje){ try{ localStorage.setItem(CLAVE_PEDIDO, JSON.stringify({email, mensaje, ts: Date.now()})); }catch(e){} }
+function borrarPedido(){ try{ localStorage.removeItem(CLAVE_PEDIDO); }catch(e){} }
 
 // Sin header Content-Type el body viaja como text/plain: así el navegador no hace
 // el pedido previo (CORS preflight) que Apps Script no sabe responder.
@@ -423,6 +431,14 @@ function mostrarLogin(mensaje){
   document.getElementById("login").style.display = "block";
   volverAPaso1();
   loginMensaje(mensaje, false);
+  // Si hay un código pedido hace poco (y la página se recargó mientras se miraba el mail),
+  // se retoma directo en el paso 2 con el mail ya puesto.
+  const pedido = leerPedido();
+  if(pedido){
+    document.getElementById("loginEmail").value = pedido.email;
+    if(Date.now() - pedido.ts < VIGENCIA_PEDIDO_MS){ irAPaso2(pedido.email, pedido.mensaje); return; }
+    borrarPedido();
+  }
   document.getElementById("loginEmail").focus();
 }
 
@@ -433,6 +449,19 @@ function volverAPaso1(){
   loginMensaje("");
 }
 
+function irAPaso2(email, mensaje){
+  document.getElementById("loginPaso1").style.display = "none";
+  document.getElementById("loginPaso2").style.display = "block";
+  document.getElementById("loginPaso2Texto").textContent = (mensaje || "Te mandamos un código de 6 dígitos.") + " (" + email + ")";
+  document.getElementById("loginCodigo").focus();
+}
+
+function otroCodigo(){
+  borrarPedido();
+  volverAPaso1();
+  document.getElementById("loginEmail").focus();
+}
+
 document.getElementById("loginPaso1").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   const boton = ev.target.querySelector("button");
@@ -441,11 +470,9 @@ document.getElementById("loginPaso1").addEventListener("submit", async (ev) => {
   try{
     const r = await llamarScript("pedirCodigo", {email});
     if(r.error){ loginMensaje(r.error, true); return; }
-    document.getElementById("loginPaso1").style.display = "none";
-    document.getElementById("loginPaso2").style.display = "block";
-    document.getElementById("loginPaso2Texto").textContent = r.mensaje + " (" + email + ")";
+    guardarPedido(email, r.mensaje);
+    irAPaso2(email, r.mensaje);
     loginMensaje("");
-    document.getElementById("loginCodigo").focus();
   }catch(err){ loginMensaje("No se pudo conectar ("+err.message+"). Probá de nuevo.", true); }
   finally{ boton.disabled = false; }
 });
@@ -453,14 +480,16 @@ document.getElementById("loginPaso1").addEventListener("submit", async (ev) => {
 document.getElementById("loginPaso2").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   const boton = ev.target.querySelector("button[type=submit]");
+  if(boton.disabled) return;
   boton.disabled = true; loginMensaje("Verificando…");
   try{
     const r = await llamarScript("verificarCodigo", {
       email: document.getElementById("loginEmail").value.trim(),
       codigo: document.getElementById("loginCodigo").value.trim()
     });
-    if(r.error){ loginMensaje(r.error, true); return; }
+    if(r.error){ loginMensaje(r.error, true); document.getElementById("loginCodigo").select(); return; }
     guardarSesion(r.token);
+    borrarPedido();
     document.getElementById("login").style.display = "none";
     document.getElementById("contenido").innerHTML = `<div class="estado" id="cargando">Cargando datos desde la Base…</div>`;
     cargar();
@@ -468,9 +497,17 @@ document.getElementById("loginPaso2").addEventListener("submit", async (ev) => {
   finally{ boton.disabled = false; }
 });
 
+// El código se limpia a solo dígitos (al pegar "123 456" o con espacios) y, al completar los 6, entra solo.
+document.getElementById("loginCodigo").addEventListener("input", (ev) => {
+  const limpio = ev.target.value.replace(/\D/g, "").slice(0, 6);
+  if(limpio !== ev.target.value) ev.target.value = limpio;
+  if(limpio.length === 6) document.getElementById("loginPaso2").requestSubmit();
+});
+
 async function salir(){
   const token = leerSesion();
   borrarSesion();
+  borrarPedido();
   try{ if(token) await llamarScript("salir", {token}); }catch(e){}
   mostrarLogin("Cerraste sesión.");
 }
