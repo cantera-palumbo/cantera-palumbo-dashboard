@@ -173,6 +173,21 @@
   .cobro-mes__op{font-size:18px; font-weight:800; color:var(--texto-sec); padding-bottom:1px;}
   .cobro-mes__total b{font-size:22px; font-weight:900; color:var(--verde);}
   .cobro-mes__nota{font-size:12.5px; margin-top:10px; color:#6b4e12; background:#f8efd9; border-radius:6px; padding:7px 12px; display:inline-block;}
+  /* Detalle auditable de la comisión: tabla de pedidos que se pagan y cuáles no (se abre tocando el mes) */
+  .cobro-mes__resumen{display:block; list-style:none; cursor:pointer;}
+  .cobro-mes__resumen::-webkit-details-marker{display:none;}
+  .cobro-mes__ver{display:block; margin-top:10px; font-size:12px; font-weight:700; color:var(--verde);}
+  .cm-detalle{margin-top:12px; border-top:1px solid var(--linea); padding-top:10px;}
+  .cm-barra{display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; font-size:12.5px; font-weight:700; margin-bottom:8px;}
+  .cm-scroll{overflow-x:auto;}
+  .cm-tabla{font-size:12px;}
+  .cm-tabla th, .cm-tabla td{padding:6px 8px; white-space:nowrap;}
+  .cm-tabla td:nth-child(3){white-space:normal; min-width:150px;}
+  .cm-tabla td:last-child{white-space:normal; min-width:170px;}
+  .cm-si{font-weight:700; color:#2e6b1f;}
+  .cm-no td{color:#8a3b12;}
+  .cm-no .cm-si{color:#8a3b12;}
+  .cm-total td{font-weight:800; background:#faf9f6;}
   .fz-tabla{width:100%; border-collapse:collapse; font-size:13px;}
   .fz-tabla th{font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--texto-sec); text-align:left; padding:8px 10px; border-bottom:2px solid var(--linea);}
   .fz-tabla td{padding:9px 10px; border-bottom:1px solid var(--linea);}
@@ -300,6 +315,9 @@
   #imprimirInforme table{width:100%; border-collapse:collapse; font-size:11px;}
   #imprimirInforme th, #imprimirInforme td{border:1px solid #ccc; padding:5px 7px; text-align:left;}
   #imprimirInforme th{background:#eee;}
+  #imprimirInforme td.num, #imprimirInforme th.num{text-align:right;}
+  #imprimirInforme tr.cm-no td{color:#555; font-style:italic;}
+  #imprimirInforme tr.cm-total td{font-weight:700; background:#eee;}
 
   @media print{
     .sidebar, .appbar, .sidebar__fondo, .filtros{display:none !important;}
@@ -1624,6 +1642,65 @@ function clientesNuevosFranco(lineasFranco){
   return { lista, fact: lista.reduce((s,x) => s + x.fact, 0), historiaDesde };
 }
 
+// Detalle auditable de un mes de comisión: una fila por pedido, con si se paga o no y el motivo.
+// El motivo viene de Codigo.gs (l.atribucion). Sirve para mirar en pantalla y para imprimir.
+function filasComisionMes(m){
+  const motivoCorto = a => a.suma
+    ? (a.desde ? `Cliente de Franco desde ${fechaCorta(a.desde)}` : "Lo cargó Franco")
+    : ({ anterior: `Anterior a la oportunidad (${fechaCorta(a.desde)})`,
+         excepcion: "Cliente en excepciones",
+         perdida: "Oportunidad Perdida" })[a.motivo] || "";
+  const pedidos = {};
+  LINEAS.filter(l => l.atribucion && l.anio === m.anio && l.mes === m.mes).forEach(l => {
+    const k = l.sistema + "|" + l.referencia + "|" + (l.atribucion.suma ? 1 : 0);
+    const p = pedidos[k] = pedidos[k] || { fecha:l.fecha, ref:l.referencia, cliente:l.cliente, vendedor:l.vendedor || "—",
+      total:0, suma:l.atribucion.suma, motivo:motivoCorto(l.atribucion) };
+    p.total += l.total;
+  });
+  return Object.values(pedidos).sort((a,b) => new Date(a.fecha) - new Date(b.fecha));
+}
+
+function tablaComisionMes(filas, clase){
+  const si = filas.filter(f => f.suma), no = filas.filter(f => !f.suma);
+  const suma = lista => lista.reduce((s,f) => s + f.total, 0);
+  const cuerpo = filas.map(f => `<tr class="${f.suma ? "" : "cm-no"}"><td>${fechaCorta(f.fecha)}</td><td>${escaparRs(f.ref)}</td>
+    <td>${escaparRs(f.cliente)}</td><td>${escaparRs(f.vendedor)}</td><td class="num">${moneda(f.total)}</td>
+    <td class="cm-si">${f.suma ? "✔ Sí" : "✘ No"}</td><td>${escaparRs(f.motivo)}</td></tr>`).join("");
+  return `<table class="${clase}">
+    <thead><tr><th>Fecha</th><th>Pedido</th><th>Cliente</th><th>Lo cargó</th><th class="num">Monto</th><th>¿Se paga?</th><th>Motivo</th></tr></thead>
+    <tbody>${cuerpo}</tbody>
+    <tfoot>
+      <tr class="cm-total"><td colspan="4">Total que se paga (${plural(si.length, "pedido", "pedidos")})</td><td class="num">${moneda(suma(si))}</td><td colspan="2"></td></tr>
+      ${no.length ? `<tr class="cm-total cm-no"><td colspan="4">Total que no se paga (${plural(no.length, "pedido", "pedidos")})</td><td class="num">${moneda(suma(no))}</td><td colspan="2"></td></tr>` : ""}
+    </tfoot></table>`;
+}
+
+function detalleComisionMes(m, filas){
+  const si = filas.filter(f => f.suma), no = filas.filter(f => !f.suma);
+  const totSi = si.reduce((s,f) => s + f.total, 0);
+  return `<div class="cm-detalle">
+    <div class="cm-barra"><span>${plural(si.length, "pedido se paga", "pedidos se pagan")}${no.length ? ` · ${plural(no.length, "queda afuera", "quedan afuera")}` : ""}</span>
+      <button type="button" class="btn-descarga" onclick="imprimirComisionMes(${m.anio},${m.mes})">Imprimir este detalle</button></div>
+    <div class="cm-scroll">${tablaComisionMes(filas, "fz-tabla cm-tabla")}</div>
+    ${Math.abs(totSi - m.facturacion) > 1 ? `<div class="cobro-mes__nota">El detalle (${moneda(totSi)}) no coincide con la facturación del mes (${moneda(m.facturacion)}). Avisá a quien administra el panel.</div>` : ""}
+  </div>`;
+}
+
+// Imprime solo el detalle de un mes (mismo mecanismo que "Informe completo (PDF)").
+function imprimirComisionMes(anio, mes){
+  const m = COMISION.find(c => c.anio === anio && c.mes === mes);
+  if(!m) return;
+  const pct = (m.porcentaje*100).toLocaleString("es-AR", {maximumFractionDigits:1}) + "%";
+  document.getElementById("imprimirInforme").innerHTML = `
+    <h2>Comisión de Franco Valero — ${MESES_LARGO[m.mes]} ${m.anio}</h2>
+    <p>Fijo ${moneda(m.basicoFijo)} + comisión ${pct} sobre ${moneda(m.facturacion)} (${moneda(m.comisionVariable)}) = <b>${moneda(m.totalACobrar)}</b></p>
+    <p style="font-size:10px">Generado el ${fechaHora(new Date().toISOString())}. "Sí" = el pedido suma a la comisión; "No" = compra de un cliente de Franco que queda afuera (ver motivo).</p>
+    ${tablaComisionMes(filasComisionMes(m), "")}`;
+  document.body.classList.add("modo-informe");
+  window.print();
+  setTimeout(()=>document.body.classList.remove("modo-informe"), 500);
+}
+
 function renderComision(){
   const cont = document.getElementById("comisionCont");
   if(!COMISION.length){
@@ -1636,8 +1713,7 @@ function renderComision(){
       const enCurso = claveMesRs(m.anio, m.mes) === mesActual;
       const proximo = TRAMOS_COMISION.find(t => m.facturacion <= t.hasta && t.siguiente);
       const falta = proximo ? `Le faltan <b>${moneda(proximo.hasta - m.facturacion)}</b> para superar ${monedaCorta(proximo.hasta)} y pasar al ${pct(proximo.siguiente)} sobre todo el mes.` : "";
-      return `<div class="cobro-mes${enCurso ? " cobro-mes--curso" : ""}">
-        <div class="cobro-mes__titulo">${MESES_LARGO[m.mes]} ${m.anio} <span class="rs-chip"${enCurso ? "" : ` style="background:var(--crema);color:var(--texto-sec)"`}>${enCurso ? "mes en curso" : "mes cerrado"}</span></div>
+      const cabecera = `<div class="cobro-mes__titulo">${MESES_LARGO[m.mes]} ${m.anio} <span class="rs-chip"${enCurso ? "" : ` style="background:var(--crema);color:var(--texto-sec)"`}>${enCurso ? "mes en curso" : "mes cerrado"}</span></div>
         <div class="cobro-mes__cuenta">
           <div><span>Fijo</span><b>${moneda(m.basicoFijo)}</b></div>
           <div class="cobro-mes__op">+</div>
@@ -1645,8 +1721,12 @@ function renderComision(){
           <div class="cobro-mes__op">=</div>
           <div class="cobro-mes__total"><span>${enCurso ? "Total hasta hoy" : "Total del mes"}</span><b>${moneda(m.totalACobrar)}</b></div>
         </div>
-        ${enCurso && falta ? `<div class="cobro-mes__nota">${falta}</div>` : ""}
-      </div>`;
+        ${enCurso && falta ? `<div class="cobro-mes__nota">${falta}</div>` : ""}`;
+      // Si el script todavía no manda el detalle (versión vieja), la tarjeta queda como antes.
+      const filas = filasComisionMes(m);
+      return filas.length
+        ? `<details class="cobro-mes${enCurso ? " cobro-mes--curso" : ""}"><summary class="cobro-mes__resumen">${cabecera}<span class="cobro-mes__ver">Tocá para ver qué pedidos se pagan y cuáles no ▾</span></summary>${detalleComisionMes(m, filas)}</details>`
+        : `<div class="cobro-mes${enCurso ? " cobro-mes--curso" : ""}">${cabecera}</div>`;
     }).join("") + `<div class="rs-nota" style="margin-top:0">Facturación atribuida: todo lo que compran los clientes con Oportunidad de Franco en el CRM (en cualquier etapa, salvo Perdida), lo cargue quien lo cargue, desde el día en que se creó la oportunidad y nunca antes del 31/08; más los pedidos que cargó él. Tramos: hasta $18M 2,5% · hasta $30M 3% · más de $30M 3,5%, sobre todo lo facturado en el mes.</div>`;
   }
 
