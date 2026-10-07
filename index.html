@@ -1647,7 +1647,7 @@ function renderComision(){
         </div>
         ${enCurso && falta ? `<div class="cobro-mes__nota">${falta}</div>` : ""}
       </div>`;
-    }).join("") + `<div class="rs-nota" style="margin-top:0">Facturación atribuida: clientes con Oportunidad Ganada de Franco en el CRM (facture quien facture) y pedidos que cargó él. Tramos: hasta $18M 2,5% · hasta $30M 3% · más de $30M 3,5%, sobre todo lo facturado en el mes.</div>`;
+    }).join("") + `<div class="rs-nota" style="margin-top:0">Facturación atribuida: todo lo que compran los clientes con Oportunidad de Franco en el CRM (en cualquier etapa, salvo Perdida), lo cargue quien lo cargue, desde el día en que se creó la oportunidad y nunca antes del 31/08; más los pedidos que cargó él. Tramos: hasta $18M 2,5% · hasta $30M 3% · más de $30M 3,5%, sobre todo lo facturado en el mes.</div>`;
   }
 
 
@@ -1742,13 +1742,14 @@ function renderAlerta(){
     const total = PEDIDOS_FRANCO_SIN_OPORTUNIDAD.reduce((s,p) => s + p.total, 0), uno = PEDIDOS_FRANCO_SIN_OPORTUNIDAD.length === 1;
     bloque(PEDIDOS_FRANCO_SIN_OPORTUNIDAD.length, "ventas sin oportunidad",
       uno ? "Venta de Franco sin oportunidad en el CRM" : "Ventas de Franco sin oportunidad en el CRM",
-      `Crear la oportunidad en el CRM y marcarla Ganado. ${uno ? "Esta venta" : "Estas ventas"} (${moneda(total)}) ya ${uno ? "suma" : "suman"} a su comisión.`,
+      `Crear la oportunidad en el CRM: desde ese día, todo lo que compre el cliente suma a la comisión de Franco, lo cargue quien lo cargue. ${uno ? "Esta venta" : "Estas ventas"} (${moneda(total)}) ya ${uno ? "suma" : "suman"}.`,
       ["Cliente", "Pedido", "Fecha", "Monto"],
       PEDIDOS_FRANCO_SIN_OPORTUNIDAD.slice().sort((a,b) => new Date(b.fecha) - new Date(a.fecha))
         .map(p => [escaparRs(p.cliente), escaparRs(p.referencia), fechaCorta(p.fecha), moneda(p.total)]));
   }
 
-  // 3) Clientes que ya le compraron a Franco pero con la oportunidad todavía abierta.
+  // 3) Clientes a los que Franco les cargó ventas pero cuya oportunidad figura Perdida
+  //    (las oportunidades abiertas ya atribuyen al cliente completo, ver Codigo.gs).
   if(PEDIDOS_FRANCO_CON_OPORTUNIDAD_PENDIENTE.length){
     const porCliente = {};
     PEDIDOS_FRANCO_CON_OPORTUNIDAD_PENDIENTE.forEach(p => {
@@ -1756,9 +1757,9 @@ function renderAlerta(){
       c.total += p.total; c.refs.add(p.sistema + "|" + p.referencia);
     });
     const n = Object.keys(porCliente).length;
-    bloque(n, "oportunidades por cerrar",
-      n === 1 ? "Cliente que ya compró, con la oportunidad todavía abierta" : "Clientes que ya compraron, con la oportunidad todavía abierta",
-      "Pasar la oportunidad a Ganado en el CRM: el cliente ya hizo su pedido.",
+    bloque(n, "oportunidades perdidas con ventas",
+      n === 1 ? "Cliente con oportunidad Perdida al que Franco le cargó ventas" : "Clientes con oportunidad Perdida a los que Franco les cargó ventas",
+      "Revisar la oportunidad en el CRM: figura Perdida pero Franco les cargó pedidos. Si el cliente compra, reabrirla; si no, corregir el pedido. Mientras figure Perdida solo suman los pedidos que cargó él.",
       ["Cliente", "Etapa en el CRM", "Pedidos", "Monto"],
       Object.entries(porCliente).sort((a,b) => b[1].total - a[1].total)
         .map(([c,d]) => [escaparRs(c), `<span class="rs-chip" style="margin:0">${escaparRs(d.estado)}</span>`, d.refs.size, moneda(d.total)]));
