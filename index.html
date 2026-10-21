@@ -2035,8 +2035,8 @@ function renderAlerta(){
         .map(p => [escaparRs(p.cliente), escaparRs(p.referencia), fechaCorta(p.fecha), moneda(p.total)]));
   }
 
-  // 3) Clientes a los que Franco les cargó ventas pero cuya oportunidad figura Perdida
-  //    (las oportunidades abiertas ya atribuyen al cliente completo, ver Codigo.gs).
+  // 3) Clientes a los que Franco les cargó ventas pero cuya oportunidad no está Ganada
+  //    (abierta en otra etapa o Perdida). Solo las Ganadas atribuyen al cliente completo, ver Codigo.gs.
   if(PEDIDOS_FRANCO_CON_OPORTUNIDAD_PENDIENTE.length){
     const porCliente = {};
     PEDIDOS_FRANCO_CON_OPORTUNIDAD_PENDIENTE.forEach(p => {
@@ -2044,9 +2044,9 @@ function renderAlerta(){
       c.total += p.total; c.refs.add(p.sistema + "|" + p.referencia);
     });
     const n = Object.keys(porCliente).length;
-    bloque(n, "oportunidades perdidas con ventas",
-      n === 1 ? "Cliente con oportunidad Perdida al que Franco le cargó ventas" : "Clientes con oportunidad Perdida a los que Franco les cargó ventas",
-      "Revisar la oportunidad en el CRM: figura Perdida pero Franco les cargó pedidos. Si el cliente compra, reabrirla; si no, corregir el pedido. Mientras figure Perdida solo suman los pedidos que cargó él.",
+    bloque(n, "oportunidades sin ganar con ventas",
+      n === 1 ? "Cliente con oportunidad sin ganar al que Franco le cargó ventas" : "Clientes con oportunidad sin ganar a los que Franco les cargó ventas",
+      "Franco les cargó pedidos pero la oportunidad no está en Ganada (ver la etapa). Si el cliente ya compra, pasar la tarjeta a Ganada; si la oportunidad se perdió, revisar el pedido. Mientras no esté Ganada, solo suman los pedidos que cargó él, no el resto de las compras del cliente.",
       ["Cliente", "Etapa en el CRM", "Pedidos", "Monto"],
       Object.entries(porCliente).sort((a,b) => b[1].total - a[1].total)
         .map(([c,d]) => [escaparRs(c), `<span class="rs-chip" style="margin:0">${escaparRs(d.estado)}</span>`, d.refs.size, moneda(d.total)]));
@@ -2226,7 +2226,8 @@ async function cargar(){
     EMPRESAS_SIN_CRUZAR = data.empresasFrancoSinCruzar || [];
     EMBUDO = data.embudoFranco || null;
     PEDIDOS_FRANCO_SIN_OPORTUNIDAD = data.pedidosFrancoSinOportunidad || [];
-    PEDIDOS_FRANCO_CON_OPORTUNIDAD_PENDIENTE = data.pedidosFrancoConOportunidadPendiente || [];
+    // Los renglones en $0 (ej. una muestra sin cargo) no suman a la comisión: no van a esta alerta.
+    PEDIDOS_FRANCO_CON_OPORTUNIDAD_PENDIENTE = (data.pedidosFrancoConOportunidadPendiente || []).filter(p => Math.abs(p.total || 0) >= 0.5);
     COMPRAS_INSUMOS = data.comprasInsumos || [];
     LISTAS_PRECIOS = data.listasPrecios || [];
     COBROS_FRANCO = data.cobrosFranco || null;
