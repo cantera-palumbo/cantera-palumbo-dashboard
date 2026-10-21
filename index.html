@@ -564,7 +564,7 @@ function datalabelsBarraH(formatFn){
     formatter: formatFn || (v=>monedaCorta(v)) };
 }
 
-let COMPRAS_INSUMOS = [], LISTAS_PRECIOS = [], chartCobros = null;
+let COMPRAS_INSUMOS = [], LISTAS_PRECIOS = [], chartCobros = null, COBROS_FRANCO = null;
 let LINEAS = [], COMISION = [], GANADO = [], LINEAS_FILTRADAS = [], EMPRESAS_SIN_CRUZAR = [], EMBUDO = null,
     PEDIDOS_FRANCO_SIN_OPORTUNIDAD = [], PEDIDOS_FRANCO_CON_OPORTUNIDAD_PENDIENTE = [];
 let chartClientes=null, chartModalidad=null, chartCategoria=null, chartTendencia=null,
@@ -624,7 +624,9 @@ const COLOR_COMBO = {"Solo Depósito":"#b07d2a","Solo Cantera":"#5f6f3d","Solo O
   "Depósito + Obra":"#d9a441","Cantera + Obra":"#6f8fa3","Las tres":"#3f4a29"};
 const RIESGO_MULTIPLO = 2.5, RIESGO_MIN_DIAS = 14, RIESGO_MIN_COMPRAS = 3, VENTANA_DIAS = 90, CAIDA_PRECIO = -0.05;
 let chartMovers = null, chartDonde = null;
-const PRIMER_MES_COMISION = "2026-09"; // primer mes completo de Franco (arrancó el 31/08/2026)
+// Septiembre de 2026 se liquidó aparte (a mano): el panel muestra la comisión desde octubre.
+// Para volver a mostrar septiembre, poner "2026-09".
+const PRIMER_MES_COMISION = "2026-10";
 const INICIO_FRANCO = "2026-08-31";
 // Mismos tramos que getComision (Codigo.gs): el porcentaje se aplica a toda la facturación del mes.
 const TRAMOS_COMISION = [{hasta:18000000, siguiente:0.03}, {hasta:30000000, siguiente:0.035}, {hasta:Infinity, siguiente:null}];
@@ -1030,6 +1032,55 @@ function renderCobros(){
   document.getElementById("cobrosClientes").innerHTML = top.length
     ? `<ul class="rs-lista">${top.map(([c,t]) => `<li><div class="rs-lista__nombre">${escaparRs(c)}</div><div class="rs-lista__monto">${moneda(t)}</div></li>`).join("")}</ul>`
     : `<div class="rs-vacio">No hay ventas con "Cuenta de cliente" en este mes.</div>`;
+  renderCobrosFranco(mes);
+}
+
+// Cobrado por cuenta corriente de los clientes de Franco (lo calcula Cobros.gs). A cada cliente se
+// le imputan sus pagos contra sus compras en orden de fecha; "cobrado" es lo que cancela compras
+// que suman para Franco. Sirve para comparar la comisión sobre lo vendido con la comisión sobre lo cobrado.
+function renderCobrosFranco(mes){
+  const kpis = document.getElementById("cobrosFrancoKpis");
+  const tabla = document.getElementById("cobrosFrancoTabla");
+  const sub = document.getElementById("cobrosFrancoSub");
+  const nota = document.getElementById("cobrosFrancoNota");
+  if(!kpis) return;
+  const cf = COBROS_FRANCO;
+  if(!cf || !cf.disponible){
+    kpis.innerHTML = "";
+    sub.textContent = "";
+    nota.textContent = "";
+    tabla.innerHTML = `<div class="rs-vacio">${escaparRs((cf && cf.motivo) || "Todavía no hay datos de pagos de clientes.")}</div>`;
+    return;
+  }
+  const [anio, nmes] = mes.split("-").map(Number);
+  const m = cf.meses.find(x => x.anio === anio && x.mes === nmes) || { vendido:0, cobrado:0, porcentajeCobrado:0.025, comisionCobrado:0, porcentajeVendido:0.025, comisionVendido:0 };
+  const pct = p => (p*100).toLocaleString("es-AR", {maximumFractionDigits:1}) + "%";
+  kpis.innerHTML = `
+    <div class="kpi"><div class="kpi__label">Vendido que suma para Franco</div><div class="kpi__valor">${monedaCorta(m.vendido)}</div><div class="kpi__sub">${nombreMesRs(mes, true)} · comisión ${pct(m.porcentajeVendido)}: ${moneda(m.comisionVendido)}</div></div>
+    <div class="kpi"><div class="kpi__label">Cobrado imputable</div><div class="kpi__valor">${monedaCorta(m.cobrado)}</div><div class="kpi__sub">${porcentajeTexto(m.cobrado, m.vendido)} de lo vendido · comisión ${pct(m.porcentajeCobrado)}: ${moneda(m.comisionCobrado)}</div></div>
+    <div class="kpi"><div class="kpi__label">Diferencia de comisión</div><div class="kpi__valor">${monedaCorta(m.comisionVendido - m.comisionCobrado)}</div><div class="kpi__sub">Sobre lo vendido menos sobre lo cobrado (sin el fijo)</div></div>`;
+  const filas = cf.clientes.map(c => ({ c, v:(c.porMes[mes] || {}).vendido || 0, k:(c.porMes[mes] || {}).cobrado || 0 }))
+    .filter(f => f.v || f.k || f.c.pendienteFranco > 1)
+    .sort((a,b) => (b.v - a.v) || (b.c.pendienteFranco - a.c.pendienteFranco));
+  const tot = (f) => filas.reduce((s,x) => s + f(x), 0);
+  sub.textContent = `${nombreMesRs(mes, true)}. "Pendiente" es lo vendido para Franco que todavía no se cobró, de cualquier mes desde el 01/09.` +
+    (cf.ultimoPago ? ` Último pago registrado en Odoo: ${fechaCorta(cf.ultimoPago)}.` : "");
+  tabla.innerHTML = filas.length ? `<div class="fz-scroll"><table class="fz-tabla"><thead><tr>
+      <th>Cliente</th><th class="num">Saldo al 31/08</th><th class="num">Vendido</th><th class="num">Cobrado</th><th class="num">% cobrado</th>
+      <th class="num">Pendiente</th><th class="num">Saldo hoy</th></tr></thead><tbody>${
+    filas.map(f => `<tr${f.c.pendienteFranco > 1 ? ' class="cm-no"' : ""}><td>${escaparRs(f.c.empresa)}${
+        f.c.cobradoEnProceso > 1 ? ` <span class="rs-chip" title="Parte del cobro está en proceso en Odoo">en proceso ${monedaCorta(f.c.cobradoEnProceso)}</span>` : ""}${
+        f.c.cobradoCheques > 1 ? ` <span class="rs-chip" title="Parte del cobro es con cheques de terceros">cheques ${monedaCorta(f.c.cobradoCheques)}</span>` : ""}</td>
+      <td class="num">${moneda(f.c.saldoInicial)}</td><td class="num">${moneda(f.v)}</td><td class="num">${moneda(f.k)}</td>
+      <td class="num">${porcentajeTexto(f.k, f.v)}</td><td class="num"><b>${moneda(f.c.pendienteFranco)}</b></td>
+      <td class="num">${f.c.saldoHoy === null ? "—" : moneda(f.c.saldoHoy)}</td></tr>`).join("")
+  }</tbody><tfoot><tr class="cm-total"><td>Total</td><td class="num">${moneda(tot(x => x.c.saldoInicial))}</td><td class="num">${moneda(tot(x => x.v))}</td>
+      <td class="num">${moneda(tot(x => x.k))}</td><td class="num">${porcentajeTexto(tot(x => x.k), tot(x => x.v))}</td>
+      <td class="num">${moneda(tot(x => x.c.pendienteFranco))}</td><td></td></tr></tfoot></table></div>`
+    : `<div class="rs-vacio">No hay ventas ni cobros de clientes de Franco en este mes.</div>`;
+  nota.textContent = "Cada pago cancela primero lo más viejo que debe el cliente: el saldo al 31/08 y las compras de antes de ser de Franco no le suman. " +
+    "Lo pagado en el momento en el punto de venta cuenta como cobrado ese día. Si el cliente pagó por adelantado, cuenta en el mes de la compra. " +
+    "Los clientes que suman son los mismos de la comisión (pestaña Gestión Vendedor).";
 }
 
 // Precio de compra de cada insumo por proveedor, y el precio al que se vende (de las ventas).
@@ -1648,7 +1699,7 @@ function filasComisionMes(m){
   const motivoCorto = a => a.suma
     ? (a.desde ? `Cliente de Franco desde ${fechaCorta(a.desde)}` : "Lo cargó Franco")
     : ({ anterior: `Anterior a la oportunidad (${fechaCorta(a.desde)})`,
-         excepcion: "Cliente en excepciones",
+         excepcion: "Excepción acordada",
          perdida: "Oportunidad Perdida" })[a.motivo] || "";
   const pedidos = {};
   LINEAS.filter(l => l.atribucion && l.anio === m.anio && l.mes === m.mes).forEach(l => {
@@ -1727,7 +1778,7 @@ function renderComision(){
       return filas.length
         ? `<details class="cobro-mes${enCurso ? " cobro-mes--curso" : ""}"><summary class="cobro-mes__resumen">${cabecera}<span class="cobro-mes__ver">Tocá para ver qué pedidos se pagan y cuáles no ▾</span></summary>${detalleComisionMes(m, filas)}</details>`
         : `<div class="cobro-mes${enCurso ? " cobro-mes--curso" : ""}">${cabecera}</div>`;
-    }).join("") + `<div class="rs-nota" style="margin-top:0">Facturación atribuida: todo lo que compran los clientes con Oportunidad de Franco en el CRM (en cualquier etapa, salvo Perdida), lo cargue quien lo cargue, desde el día en que se creó la oportunidad y nunca antes del 31/08; más los pedidos que cargó él. Tramos: hasta $18M 2,5% · hasta $30M 3% · más de $30M 3,5%, sobre todo lo facturado en el mes.</div>`;
+    }).join("") + `<div class="rs-nota" style="margin-top:0">Facturación atribuida: todo lo que compran los clientes con Oportunidad de Franco Ganada en el CRM, lo cargue quien lo cargue, desde el momento en que se creó la oportunidad (las compras anteriores no suman); las cuentas que le pasaron, desde la fecha acordada; más los pedidos que cargó él. Septiembre se liquidó aparte. Tramos: hasta $18M 2,5% · hasta $30M 3% · más de $30M 3,5%, sobre todo lo facturado en el mes.</div>`;
   }
 
 
@@ -2022,6 +2073,7 @@ async function cargar(){
     PEDIDOS_FRANCO_CON_OPORTUNIDAD_PENDIENTE = data.pedidosFrancoConOportunidadPendiente || [];
     COMPRAS_INSUMOS = data.comprasInsumos || [];
     LISTAS_PRECIOS = data.listasPrecios || [];
+    COBROS_FRANCO = data.cobrosFranco || null;
 
     document.getElementById("contenido").innerHTML = `
       <div class="pestana activa" id="pestana-mes"></div>
@@ -2148,6 +2200,14 @@ async function cargar(){
         <div class="paneles paneles--2">
           <div class="panel"><h3>Por unidad de negocio</h3><div class="panel__sub">Ventas del punto de venta en el mes elegido</div><div id="cobrosUnidades"></div></div>
           <div class="panel"><h3>Clientes que más compran a cuenta</h3><div class="panel__sub">Vendido con "Cuenta de cliente" en el mes elegido (no es lo que deben hoy)</div><div id="cobrosClientes"></div></div>
+        </div>
+        <div class="seccion-titulo">Cobrado de los clientes de Franco (cuenta corriente)</div>
+        <div class="kpis" id="cobrosFrancoKpis"></div>
+        <div class="panel panel--full">
+          <h3>Vendido y cobrado por cliente</h3>
+          <div class="panel__sub" id="cobrosFrancoSub"></div>
+          <div id="cobrosFrancoTabla"></div>
+          <div class="rs-nota" style="margin-top:10px" id="cobrosFrancoNota"></div>
         </div>
       </div>
 
