@@ -346,6 +346,7 @@
       <button class="tab" data-tab="cobros" id="tabCobros" style="display:none;"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="6" width="20" height="13" rx="2"/><path d="M2 10h20"/><path d="M6 15h4"/></svg><span>Cobros</span></button>
       <button class="tab" data-tab="compras" id="tabCompras" style="display:none;"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 4h2l2.5 11h11L21 7H6.2"/><circle cx="9" cy="19.5" r="1.5"/><circle cx="17" cy="19.5" r="1.5"/></svg><span>Compras</span></button>
       <button class="tab" data-tab="precios" id="tabPrecios" style="display:none;"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.5"/></svg><span>Precios</span></button>
+      <button class="tab" data-tab="liquidacion" id="tabLiquidacion" style="display:none;"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="m8 12 2.5 2.5L16 9"/></svg><span>Liquidación</span></button>
   </nav>
   <div class="sidebar__pie">
     <div class="topbar__meta">Última actualización<br><strong id="actualizado">—</strong></div>
@@ -564,7 +565,7 @@ function datalabelsBarraH(formatFn){
     formatter: formatFn || (v=>monedaCorta(v)) };
 }
 
-let COMPRAS_INSUMOS = [], LISTAS_PRECIOS = [], chartCobros = null, COBROS_FRANCO = null;
+let COMPRAS_INSUMOS = [], LISTAS_PRECIOS = [], chartCobros = null, COBROS_FRANCO = null, COMISION_FRANCO = null;
 let LINEAS = [], COMISION = [], GANADO = [], LINEAS_FILTRADAS = [], EMPRESAS_SIN_CRUZAR = [], EMBUDO = null,
     PEDIDOS_FRANCO_SIN_OPORTUNIDAD = [], PEDIDOS_FRANCO_CON_OPORTUNIDAD_PENDIENTE = [];
 let chartClientes=null, chartModalidad=null, chartCategoria=null, chartTendencia=null,
@@ -624,9 +625,7 @@ const COLOR_COMBO = {"Solo Depósito":"#b07d2a","Solo Cantera":"#5f6f3d","Solo O
   "Depósito + Obra":"#d9a441","Cantera + Obra":"#6f8fa3","Las tres":"#3f4a29"};
 const RIESGO_MULTIPLO = 2.5, RIESGO_MIN_DIAS = 14, RIESGO_MIN_COMPRAS = 3, VENTANA_DIAS = 90, CAIDA_PRECIO = -0.05;
 let chartMovers = null, chartDonde = null;
-// Septiembre de 2026 se liquidó aparte (a mano): el panel muestra la comisión desde octubre.
-// Para volver a mostrar septiembre, poner "2026-09".
-const PRIMER_MES_COMISION = "2026-10";
+const PRIMER_MES_COMISION = "2026-09"; // primer mes completo de Franco (arrancó el 31/08/2026); septiembre figura liquidado
 const INICIO_FRANCO = "2026-08-31";
 // Mismos tramos que getComision (Codigo.gs): el porcentaje se aplica a toda la facturación del mes.
 const TRAMOS_COMISION = [{hasta:18000000, siguiente:0.03}, {hasta:30000000, siguiente:0.035}, {hasta:Infinity, siguiente:null}];
@@ -985,7 +984,9 @@ function prepararCobros(permisos){
   }
   if(puede("compras")) renderInsumos();
   document.getElementById("tabPrecios").style.display = puede("precios") ? "" : "none";
-  document.getElementById("grupoGerencia").style.display = ["cobros","compras","precios"].some(puede) ? "" : "none";
+  document.getElementById("tabLiquidacion").style.display = puede("comisiones") ? "" : "none";
+  if(puede("comisiones")) prepararLiquidacion();
+  document.getElementById("grupoGerencia").style.display = ["cobros","compras","precios","comisiones"].some(puede) ? "" : "none";
   if(puede("precios")) prepararPrecios();
 }
 
@@ -1693,60 +1694,201 @@ function clientesNuevosFranco(lineasFranco){
   return { lista, fact: lista.reduce((s,x) => s + x.fact, 0), historiaDesde };
 }
 
-// Detalle auditable de un mes de comisión: una fila por pedido, con si se paga o no y el motivo.
-// El motivo viene de Codigo.gs (l.atribucion). Sirve para mirar en pantalla y para imprimir.
-function filasComisionMes(m){
-  const motivoCorto = a => a.suma
-    ? (a.desde ? `Cliente de Franco desde ${fechaCorta(a.desde)}` : "Lo cargó Franco")
-    : ({ anterior: `Anterior a la oportunidad (${fechaCorta(a.desde)})`,
-         excepcion: "Excepción acordada",
-         perdida: "Oportunidad Perdida" })[a.motivo] || "";
+// ================= COMISIÓN DE FRANCO: VENDIDO Y COBRADO =================
+// La calcula Cobros.gs (getComisionFranco): por mes, lo cobrado de los pedidos que suman para
+// Franco. Los meses liquidados vienen congelados (lo que efectivamente se pagó).
+const ESTADO_MES = { "liquidado":"liquidado", "en curso":"mes en curso", "a liquidar":"pendiente de liquidar" };
+function pctTexto(p){ return (p*100).toLocaleString("es-AR", {maximumFractionDigits:1}) + "%"; }
+function mesesComision(){
+  return (COMISION_FRANCO && COMISION_FRANCO.disponible ? COMISION_FRANCO.meses : []).filter(m => m.mes >= PRIMER_MES_COMISION);
+}
+
+// Compras de clientes de Franco que no suman en el mes (anteriores a la oportunidad, excepciones...).
+// Sale de las líneas (l.atribucion), por fecha de venta. Motivos neutros: los ve Franco.
+function noSumanDelMes(clave){
+  const motivo = a => ({ anterior: `Anterior a la oportunidad (${fechaCorta(a.desde)})`, excepcion: "Excepción acordada", perdida: "Oportunidad Perdida" })[a.motivo] || "";
   const pedidos = {};
-  LINEAS.filter(l => l.atribucion && l.anio === m.anio && l.mes === m.mes).forEach(l => {
-    const k = l.sistema + "|" + l.referencia + "|" + (l.atribucion.suma ? 1 : 0);
-    const p = pedidos[k] = pedidos[k] || { fecha:l.fecha, ref:l.referencia, cliente:l.cliente, vendedor:l.vendedor || "—",
-      total:0, suma:l.atribucion.suma, motivo:motivoCorto(l.atribucion) };
+  LINEAS.filter(l => l.atribucion && !l.atribucion.suma && claveMesRs(l.anio, l.mes) === clave).forEach(l => {
+    const k = l.sistema + "|" + l.referencia;
+    const p = pedidos[k] = pedidos[k] || { fecha:l.fecha, ref:l.referencia, cliente:l.cliente, total:0, motivo:motivo(l.atribucion) };
     p.total += l.total;
   });
   return Object.values(pedidos).sort((a,b) => new Date(a.fecha) - new Date(b.fecha));
 }
 
-function tablaComisionMes(filas, clase){
-  const si = filas.filter(f => f.suma), no = filas.filter(f => !f.suma);
-  const suma = lista => lista.reduce((s,f) => s + f.total, 0);
-  const cuerpo = filas.map(f => `<tr class="${f.suma ? "" : "cm-no"}"><td>${fechaCorta(f.fecha)}</td><td>${escaparRs(f.ref)}</td>
-    <td>${escaparRs(f.cliente)}</td><td>${escaparRs(f.vendedor)}</td><td class="num">${moneda(f.total)}</td>
-    <td class="cm-si">${f.suma ? "✔ Sí" : "✘ No"}</td><td>${escaparRs(f.motivo)}</td></tr>`).join("");
+function tablaCobradoMes(m, clase){
+  const items = (m.items || []).filter(x => x.incluido !== false); // los destildados por los jefes no se muestran
+  const total = items.reduce((s,x) => s + x.monto, 0);
   return `<table class="${clase}">
-    <thead><tr><th>Fecha</th><th>Pedido</th><th>Cliente</th><th>Lo cargó</th><th class="num">Monto</th><th>¿Se paga?</th><th>Motivo</th></tr></thead>
-    <tbody>${cuerpo}</tbody>
-    <tfoot>
-      <tr class="cm-total"><td colspan="4">Total que se paga (${plural(si.length, "pedido", "pedidos")})</td><td class="num">${moneda(suma(si))}</td><td colspan="2"></td></tr>
-      ${no.length ? `<tr class="cm-total cm-no"><td colspan="4">Total que no se paga (${plural(no.length, "pedido", "pedidos")})</td><td class="num">${moneda(suma(no))}</td><td colspan="2"></td></tr>` : ""}
-    </tfoot></table>`;
+    <thead><tr><th>Venta</th><th>Pedido</th><th>Cliente</th><th class="num">Vendido</th><th class="num">${m.estado === "liquidado" ? "Liquidado" : "Cobrado en el mes"}</th></tr></thead>
+    <tbody>${items.map(x => `<tr><td>${fechaCorta(x.fecha)}</td><td>${escaparRs(x.ref)}</td><td>${escaparRs(x.cliente)}${x.motivo ? ` <span class="rs-chip">${escaparRs(x.motivo)}</span>` : ""}</td>
+      <td class="num">${moneda(x.vendido)}</td><td class="num">${moneda(x.monto)}</td></tr>`).join("")}</tbody>
+    <tfoot><tr class="cm-total"><td colspan="4">Total (${plural(items.length, "pedido", "pedidos")})</td><td class="num">${moneda(total)}</td></tr></tfoot></table>`;
 }
 
-function detalleComisionMes(m, filas){
-  const si = filas.filter(f => f.suma), no = filas.filter(f => !f.suma);
-  const totSi = si.reduce((s,f) => s + f.total, 0);
-  return `<div class="cm-detalle">
-    <div class="cm-barra"><span>${plural(si.length, "pedido se paga", "pedidos se pagan")}${no.length ? ` · ${plural(no.length, "queda afuera", "quedan afuera")}` : ""}</span>
-      <button type="button" class="btn-descarga" onclick="imprimirComisionMes(${m.anio},${m.mes})">Imprimir este detalle</button></div>
-    <div class="cm-scroll">${tablaComisionMes(filas, "fz-tabla cm-tabla")}</div>
-    ${Math.abs(totSi - m.facturacion) > 1 ? `<div class="cobro-mes__nota">El detalle (${moneda(totSi)}) no coincide con la facturación del mes (${moneda(m.facturacion)}). Avisá a quien administra el panel.</div>` : ""}
+function tablaNoSuman(filas, clase){
+  if(!filas.length) return "";
+  return `<div class="cm-barra" style="margin-top:14px"><span>Compras de tus clientes que no suman</span></div>
+    <table class="${clase}"><thead><tr><th>Fecha</th><th>Pedido</th><th>Cliente</th><th class="num">Monto</th><th>Motivo</th></tr></thead>
+    <tbody>${filas.map(f => `<tr class="cm-no"><td>${fechaCorta(f.fecha)}</td><td>${escaparRs(f.ref)}</td><td>${escaparRs(f.cliente)}</td>
+      <td class="num">${moneda(f.total)}</td><td>${escaparRs(f.motivo)}</td></tr>`).join("")}</tbody></table>`;
+}
+
+// ================= LIQUIDACIÓN (solo jefes: permiso "comisiones") =================
+// Propuesta del mes con un tilde por pedido. Cada tilde se guarda en la Base (hoja Comision_tildes)
+// y "Liquidar mes" congela el total en Liquidaciones_Franco. Franco no ve esta pestaña.
+function recalcularMes(m){
+  if(m.estado === "liquidado") return;
+  m.base = (m.items || []).filter(x => x.incluido !== false).reduce((s,x) => s + x.monto, 0);
+  m.porcentaje = m.base <= 18000000 ? 0.025 : (m.base <= 30000000 ? 0.03 : 0.035);
+  m.comision = m.base * m.porcentaje;
+  m.total = m.comision + m.fijo;
+}
+
+function prepararLiquidacion(){
+  const sel = document.getElementById("fLiqMes");
+  const meses = mesesComision();
+  const porDefecto = (meses.filter(m => m.estado === "a liquidar")[0] || meses[meses.length - 1] || {}).mes;
+  sel.innerHTML = meses.slice().reverse().map(m => `<option value="${m.mes}"${m.mes === porDefecto ? " selected" : ""}>${nombreMesRs(m.mes, true)} · ${ESTADO_MES[m.estado]}</option>`).join("");
+  sel.onchange = renderLiquidacion;
+  renderLiquidacion();
+}
+
+function chipsItem(x){
+  return (x.enProceso ? ` <span class="rs-chip" title="Parte del cobro figura en proceso en Odoo">en proceso</span>` : "") +
+    (x.cheque ? ` <span class="rs-chip" title="Parte del cobro es con cheques de terceros">cheque</span>` : "");
+}
+
+function renderLiquidacion(){
+  const cont = document.getElementById("liqCont");
+  const clave = document.getElementById("fLiqMes").value;
+  const m = mesesComision().find(x => x.mes === clave);
+  if(!m){ cont.innerHTML = `<div class="vacio">No hay datos de comisión todavía.</div>`; return; }
+  const kpis = (titulo, x, sub) => `<div class="kpi"><div class="kpi__label">${titulo}</div><div class="kpi__valor">${monedaCorta(x.total)}</div>
+    <div class="kpi__sub">${sub || `Fijo ${moneda(x.fijo)} + ${pctTexto(x.porcentaje)} sobre ${moneda(x.base)}`}</div></div>`;
+  if(m.estado === "liquidado"){
+    const c = m.calculado || { base:0, total:0, fijo:m.fijo, porcentaje:0.025 };
+    const dif = m.total - c.total;
+    cont.innerHTML = `<div class="kpis">${kpis("Liquidado", m)}
+        ${kpis("Calculado con las reglas", c, `${pctTexto(c.porcentaje)} sobre ${moneda(c.base)} cobrados en el mes`)}
+        <div class="kpi"><div class="kpi__label">Diferencia</div><div class="kpi__valor">${monedaCorta(dif)}</div><div class="kpi__sub">${dif > 0 ? "Se pagó más que el cálculo" : (dif < 0 ? "Se pagó menos que el cálculo" : "Coincide")} · incluye ajustes de meses anteriores y lo pagado antes de cobrarse</div></div></div>
+      ${conciliacionHtml(m)}
+      <div class="panel panel--full"><h3>Lo que se liquidó</h3>
+        <div class="panel__sub">Liquidado${m.liquidadoPor ? " por " + escaparRs(m.liquidadoPor) : ""}${m.fechaLiquidacion ? " el " + fechaCorta(m.fechaLiquidacion) : ""}${m.nota ? " · " + escaparRs(m.nota) : ""}. Lo liquidado de cada pedido no se vuelve a pagar cuando se cobre.</div>
+        <div class="fz-scroll">${tablaCobradoMes(m, "fz-tabla")}</div></div>
+      <div class="panel panel--full"><h3>Cálculo con las reglas (para comparar)</h3>
+        <div class="panel__sub">Lo cobrado dentro del mes de los pedidos que suman para Franco. Lo que se cobró después figura en el mes del cobro, descontando lo ya liquidado.</div>
+        <div class="fz-scroll">${tablaCobradoMes({ items:m.itemsCalculados || [], estado:"calculado" }, "fz-tabla")}</div></div>`;
+    return;
+  }
+  const todos = m.items || [];
+  const items = todos.filter(x => !x.ajuste);
+  const fuera = items.filter(x => x.incluido === false);
+  cont.innerHTML = `<div class="kpis">${kpis(m.estado === "en curso" ? "A liquidar (hasta hoy)" : "A liquidar", m)}
+      <div class="kpi"><div class="kpi__label">Pedidos</div><div class="kpi__valor">${items.length - fuera.length}</div><div class="kpi__sub">${fuera.length ? `${plural(fuera.length, "destildado", "destildados")} por ${moneda(fuera.reduce((s,x) => s + x.monto, 0))}` : "Todos incluidos"}</div></div></div>
+    <div class="panel panel--full"><h3>¿Qué se paga en ${nombreMesRs(m.mes, true)}?</h3>
+      <div class="panel__sub">Un renglón por pedido con lo cobrado en el mes. Destildá lo que no se paga: se guarda al instante y Franco deja de verlo. Si un pedido figura "en proceso" o con cheque, decidan si se paga ahora o cuando se acredite.</div>
+      <div class="fz-scroll"><table class="fz-tabla"><thead><tr><th>Paga</th><th>Venta</th><th>Pedido</th><th>Cliente</th><th class="num">Vendido</th><th class="num">Cobrado en el mes</th></tr></thead>
+        <tbody>${items.map(x => { const i = todos.indexOf(x); return `<tr${x.incluido === false ? ' class="cm-no"' : ""}><td><input type="checkbox" ${x.incluido === false ? "" : "checked"} onchange="tildarItem('${m.mes}', ${i}, this)" aria-label="Pagar ${escaparRs(x.ref)}"></td>
+          <td>${fechaCorta(x.fecha)}</td><td>${escaparRs(x.ref)}</td><td>${escaparRs(x.cliente)}${chipsItem(x)}</td><td class="num">${moneda(x.vendido)}</td><td class="num">${moneda(x.monto)}</td></tr>`; }).join("")}</tbody>
+        <tfoot><tr class="cm-total"><td colspan="5">Base a liquidar${todos.some(x => x.ajuste && x.incluido) ? " (con ajustes)" : ""}</td><td class="num">${moneda(m.base)}</td></tr></tfoot></table></div>
+      ${ajustesHtml(m, todos)}
+      <div style="margin-top:14px;display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+        <button type="button" class="btn-descarga" id="btnLiquidar" onclick="liquidarMesPanel('${m.mes}')">Liquidar ${nombreMesRs(m.mes, true)}: ${moneda(m.total)}</button>
+        <span class="rs-nota" style="margin:0">${m.estado === "en curso" ? "El mes todavía no terminó: lo que se cobre después de liquidar va al mes siguiente." : "Al liquidar, el mes queda congelado con estos tildes."}</span>
+      </div></div>`;
+}
+
+// Conciliación de un mes liquidado: lo que se pagó de más, lo que faltó y lo que se pagó antes de cobrarse.
+function conciliacionHtml(m){
+  const c = m.conciliacion;
+  if(!c || (!c.faltantes.length && !c.sobrantes.length && !c.anticipos.length))
+    return `<div class="panel panel--full"><h3>Conciliación</h3><div class="rs-vacio">Lo liquidado coincide con las reglas: no hay nada pagado de más ni de menos.</div></div>`;
+  const chipEstado = e => `<span class="rs-chip"${e === "pendiente" ? ' style="background:#f8efd9;color:#6b4e12"' : (e === "no se ajusta" ? ' style="background:var(--crema);color:var(--texto-sec)"' : "")}>${e === "pendiente" ? "sin decidir" : escaparRs(e)}</span>`;
+  const tabla = (lista, col) => `<div class="fz-scroll"><table class="fz-tabla"><thead><tr><th>Venta</th><th>Pedido</th><th>Cliente</th><th class="num">${col}</th><th>Estado</th></tr></thead><tbody>${
+    lista.map(x => `<tr><td>${fechaCorta(x.fecha)}</td><td>${escaparRs(x.ref)}</td><td>${escaparRs(x.cliente)}</td><td class="num">${moneda(x.faltaCobrar !== undefined ? x.faltaCobrar : x.monto)}</td><td>${x.estado ? chipEstado(x.estado) : "no se vuelve a pagar"}</td></tr>`).join("")
+  }</tbody></table></div>`;
+  const suma = l => l.reduce((s,x) => s + x.monto, 0);
+  return `<div class="panel panel--full"><h3>Conciliación: lo pagado contra las reglas</h3>
+    <div class="panel__sub">Lo que quedó "sin decidir" aparece como ajuste en el próximo mes a liquidar, para sumarlo, descontarlo o dejarlo como está.</div>
+    ${c.sobrantes.length ? `<h4 style="margin:14px 0 6px">Se pagó y no corresponde · ${moneda(suma(c.sobrantes))}</h4>${tabla(c.sobrantes, "Pagado")}` : ""}
+    ${c.faltantes.length ? `<h4 style="margin:14px 0 6px">Faltó pagar (estaba cobrado) · ${moneda(suma(c.faltantes))}</h4>${tabla(c.faltantes, "Monto")}` : ""}
+    ${c.anticipos.length ? `<h4 style="margin:14px 0 6px">Se pagó antes de que el cliente pague · ${moneda(suma(c.anticipos))}</h4>
+      <div class="panel__sub">No hay que hacer nada: cuando el cliente pague, esto no se vuelve a sumar.</div>${tabla(c.anticipos, "Falta cobrar")}` : ""}
   </div>`;
 }
 
-// Imprime solo el detalle de un mes (mismo mecanismo que "Informe completo (PDF)").
-function imprimirComisionMes(anio, mes){
-  const m = COMISION.find(c => c.anio === anio && c.mes === mes);
+// Ajustes de meses ya liquidados que se ofrecen en este mes. Cada uno se decide aparte.
+function ajustesHtml(m, todos){
+  const ajustes = todos.filter(x => x.ajuste);
+  if(!ajustes.length) return "";
+  return `<h4 style="margin:18px 0 6px">Ajustes de meses anteriores</h4>
+    <div class="panel__sub">Vienen de la conciliación de meses ya liquidados. Lo que se suma o descuenta entra en la base de este mes; Franco lo ve como "Ajuste de &lt;mes&gt;", sin el motivo.</div>
+    <div class="fz-scroll"><table class="fz-tabla"><thead><tr><th>Pedido</th><th>Cliente</th><th>Motivo</th><th class="num">Ajuste</th><th>Decisión</th></tr></thead><tbody>${
+      ajustes.map(x => { const i = todos.indexOf(x); return `<tr${x.incluido ? "" : ' class="cm-no"'}><td>${escaparRs(x.ref)}</td><td>${escaparRs(x.cliente)}</td><td>${escaparRs(x.motivo)}</td>
+        <td class="num">${moneda(x.monto)}</td><td style="white-space:nowrap">${x.incluido
+          ? `<b>${x.monto < 0 ? "Se descuenta" : "Se suma"} en este mes</b> · <a href="#" onclick="ajustarItem('${m.mes}', ${i}, 'PENDIENTE'); return false;">deshacer</a>`
+          : `<button type="button" class="btn-descarga" onclick="ajustarItem('${m.mes}', ${i}, 'SI')">${x.monto < 0 ? "Descontar" : "Sumar"}</button>
+             <button type="button" class="btn-descarga" onclick="ajustarItem('${m.mes}', ${i}, 'NO')">No ajustar</button>`}</td></tr>`; }).join("")
+    }</tbody></table></div>`;
+}
+
+async function ajustarItem(clave, i, estado){
+  const m = mesesComision().find(x => x.mes === clave), x = m && m.items[i];
+  if(!x) return;
+  if(estado === "NO" && !confirm(`¿No ajustar ${x.ref} (${moneda(x.monto)})?\n\nDeja de aparecer como ajuste pendiente.`)) return;
+  try{
+    const r = await llamarScript("tildar", { token: leerSesion(), mes: clave, sistema: "AJ-" + x.sistema, ref: x.ref, estado });
+    if(r.error) throw new Error(r.error === "sesion" ? "Tu sesión venció. Ingresá de nuevo." : r.error);
+  }catch(err){ alert("No se pudo guardar: " + err.message); return; }
+  if(estado === "NO") m.items.splice(i, 1); else x.incluido = estado === "SI";
+  recalcularMes(m);
+  renderLiquidacion();
+  renderComision();
+}
+
+async function tildarItem(clave, i, cb){
+  const m = mesesComision().find(x => x.mes === clave), x = m && m.items[i];
+  if(!x) return;
+  const antes = x.incluido !== false;
+  x.incluido = cb.checked; cb.disabled = true;
+  try{
+    const r = await llamarScript("tildar", { token: leerSesion(), mes: clave, sistema: x.sistema, ref: x.ref, incluir: cb.checked });
+    if(r.error) throw new Error(r.error === "sesion" ? "Tu sesión venció. Ingresá de nuevo." : r.error);
+  }catch(err){
+    x.incluido = antes;
+    alert("No se pudo guardar: " + err.message);
+  }
+  recalcularMes(m);
+  renderLiquidacion();
+  renderComision();
+}
+
+async function liquidarMesPanel(clave){
+  const m = mesesComision().find(x => x.mes === clave);
   if(!m) return;
-  const pct = (m.porcentaje*100).toLocaleString("es-AR", {maximumFractionDigits:1}) + "%";
+  if(!confirm(`¿Liquidar ${nombreMesRs(clave, true)}?\n\nBase ${moneda(m.base)} · ${pctTexto(m.porcentaje)} · Total ${moneda(m.total)}\n\nQueda congelado y Franco lo ve como liquidado.`)) return;
+  const btn = document.getElementById("btnLiquidar");
+  btn.disabled = true; btn.textContent = "Liquidando…";
+  try{
+    const r = await llamarScript("liquidar", { token: leerSesion(), mes: clave });
+    if(r.error) throw new Error(r.error === "sesion" ? "Tu sesión venció. Ingresá de nuevo." : r.error);
+    alert("Listo: " + nombreMesRs(clave, true) + " quedó liquidado.");
+    cargar();
+  }catch(err){
+    alert("No se pudo liquidar: " + err.message);
+    btn.disabled = false; btn.textContent = `Liquidar ${nombreMesRs(clave, true)}: ${moneda(m.total)}`;
+  }
+}
+
+function imprimirComisionMes(clave){
+  const m = mesesComision().find(x => x.mes === clave);
+  if(!m) return;
   document.getElementById("imprimirInforme").innerHTML = `
-    <h2>Comisión de Franco Valero — ${MESES_LARGO[m.mes]} ${m.anio}</h2>
-    <p>Fijo ${moneda(m.basicoFijo)} + comisión ${pct} sobre ${moneda(m.facturacion)} (${moneda(m.comisionVariable)}) = <b>${moneda(m.totalACobrar)}</b></p>
-    <p style="font-size:10px">Generado el ${fechaHora(new Date().toISOString())}. "Sí" = el pedido suma a la comisión; "No" = compra de un cliente de Franco que queda afuera (ver motivo).</p>
-    ${tablaComisionMes(filasComisionMes(m), "")}`;
+    <h2>Comisión de Franco Valero — ${nombreMesRs(m.mes, true)} (${ESTADO_MES[m.estado]})</h2>
+    <p>Fijo ${moneda(m.fijo)} + comisión ${pctTexto(m.porcentaje)} sobre ${moneda(m.base)} vendidos y cobrados (${moneda(m.comision)}) = <b>${moneda(m.total)}</b></p>
+    <p style="font-size:10px">Generado el ${fechaHora(new Date().toISOString())}.</p>
+    ${tablaCobradoMes(m, "")}${tablaNoSuman(noSumanDelMes(m.mes), "")}`;
   document.body.classList.add("modo-informe");
   window.print();
   setTimeout(()=>document.body.classList.remove("modo-informe"), 500);
@@ -1754,31 +1896,45 @@ function imprimirComisionMes(anio, mes){
 
 function renderComision(){
   const cont = document.getElementById("comisionCont");
-  if(!COMISION.length){
-    cont.innerHTML = `<div class="vacio">Todavía no hay facturación atribuida a Franco para calcular comisión.</div>`;
+  const meses = mesesComision();
+  if(!COMISION_FRANCO || !COMISION_FRANCO.disponible){
+    cont.innerHTML = `<div class="vacio">${escaparRs((COMISION_FRANCO && COMISION_FRANCO.motivo) || "Todavía no hay datos de cobros para calcular la comisión.")}</div>`;
   } else {
     // Un renglón por mes, del más nuevo al más viejo: fijo + variable = total.
-    const mesActual = claveMesRs(new Date().getFullYear(), new Date().getMonth()+1);
-    const pct = p => (p*100).toLocaleString("es-AR", {maximumFractionDigits:1}) + "%";
-    cont.innerHTML = COMISION.slice().reverse().map(m=>{
-      const enCurso = claveMesRs(m.anio, m.mes) === mesActual;
-      const proximo = TRAMOS_COMISION.find(t => m.facturacion <= t.hasta && t.siguiente);
-      const falta = proximo ? `Le faltan <b>${moneda(proximo.hasta - m.facturacion)}</b> para superar ${monedaCorta(proximo.hasta)} y pasar al ${pct(proximo.siguiente)} sobre todo el mes.` : "";
-      const cabecera = `<div class="cobro-mes__titulo">${MESES_LARGO[m.mes]} ${m.anio} <span class="rs-chip"${enCurso ? "" : ` style="background:var(--crema);color:var(--texto-sec)"`}>${enCurso ? "mes en curso" : "mes cerrado"}</span></div>
+    const tarjetas = meses.slice().reverse().map(m => {
+      const enCurso = m.estado === "en curso", liquidado = m.estado === "liquidado";
+      const proximo = TRAMOS_COMISION.find(t => m.base <= t.hasta && t.siguiente);
+      const falta = proximo ? `Le faltan <b>${moneda(proximo.hasta - m.base)}</b> cobrados para superar ${monedaCorta(proximo.hasta)} y pasar al ${pctTexto(proximo.siguiente)} sobre todo el mes.` : "";
+      const chip = `<span class="rs-chip"${enCurso ? "" : ` style="background:var(--crema);color:var(--texto-sec)"`}>${ESTADO_MES[m.estado]}</span>`;
+      const cabecera = `<div class="cobro-mes__titulo">${nombreMesRs(m.mes, true)} ${chip}</div>
         <div class="cobro-mes__cuenta">
-          <div><span>Fijo</span><b>${moneda(m.basicoFijo)}</b></div>
+          <div><span>Fijo</span><b>${moneda(m.fijo)}</b></div>
           <div class="cobro-mes__op">+</div>
-          <div><span>Comisiones · ${pct(m.porcentaje)} sobre ${moneda(m.facturacion)} facturados</span><b>${moneda(m.comisionVariable)}</b></div>
+          <div><span>Comisiones · ${pctTexto(m.porcentaje)} sobre ${moneda(m.base)} vendidos y cobrados</span><b>${moneda(m.comision)}</b></div>
           <div class="cobro-mes__op">=</div>
-          <div class="cobro-mes__total"><span>${enCurso ? "Total hasta hoy" : "Total del mes"}</span><b>${moneda(m.totalACobrar)}</b></div>
+          <div class="cobro-mes__total"><span>${liquidado ? "Total liquidado" : (enCurso ? "Total hasta hoy" : "Total a liquidar")}</span><b>${moneda(m.total)}</b></div>
         </div>
-        ${enCurso && falta ? `<div class="cobro-mes__nota">${falta}</div>` : ""}`;
-      // Si el script todavía no manda el detalle (versión vieja), la tarjeta queda como antes.
-      const filas = filasComisionMes(m);
-      return filas.length
-        ? `<details class="cobro-mes${enCurso ? " cobro-mes--curso" : ""}"><summary class="cobro-mes__resumen">${cabecera}<span class="cobro-mes__ver">Tocá para ver qué pedidos se pagan y cuáles no ▾</span></summary>${detalleComisionMes(m, filas)}</details>`
-        : `<div class="cobro-mes${enCurso ? " cobro-mes--curso" : ""}">${cabecera}</div>`;
-    }).join("") + `<div class="rs-nota" style="margin-top:0">Facturación atribuida: todo lo que compran los clientes con Oportunidad de Franco Ganada en el CRM, lo cargue quien lo cargue, desde el momento en que se creó la oportunidad (las compras anteriores no suman); las cuentas que le pasaron, desde la fecha acordada; más los pedidos que cargó él. Septiembre se liquidó aparte. Tramos: hasta $18M 2,5% · hasta $30M 3% · más de $30M 3,5%, sobre todo lo facturado en el mes.</div>`;
+        ${enCurso && falta ? `<div class="cobro-mes__nota">${falta}</div>` : ""}
+        ${liquidado && m.nota ? `<div class="cobro-mes__nota">${escaparRs(m.nota)}</div>` : ""}`;
+      const detalle = `<div class="cm-detalle">
+          <div class="cm-barra"><span>${plural((m.items || []).filter(x => x.incluido !== false).length, "pedido suma", "pedidos suman")} en ${nombreMesRs(m.mes)}</span>
+            <button type="button" class="btn-descarga" onclick="imprimirComisionMes('${m.mes}')">Imprimir este detalle</button></div>
+          <div class="cm-scroll">${tablaCobradoMes(m, "fz-tabla cm-tabla")}${tablaNoSuman(noSumanDelMes(m.mes), "fz-tabla cm-tabla")}</div>
+        </div>`;
+      return `<details class="cobro-mes${enCurso ? " cobro-mes--curso" : ""}"><summary class="cobro-mes__resumen">${cabecera}<span class="cobro-mes__ver">Tocá para ver qué pedidos suman ▾</span></summary>${detalle}</details>`;
+    }).join("");
+    // Lo vendido que todavía no se cobró: le va a sumar en el mes en que el cliente pague.
+    const pend = COMISION_FRANCO.pendientes || [];
+    const totPend = pend.reduce((s,x) => s + x.pendiente, 0);
+    const pendiente = pend.length ? `<details class="cobro-mes"><summary class="cobro-mes__resumen">
+        <div class="cobro-mes__titulo">Vendido pendiente de cobro</div>
+        <div class="cobro-mes__cuenta"><div class="cobro-mes__total"><span>Te suma cuando el cliente lo pague</span><b>${moneda(totPend)}</b></div></div>
+        <span class="cobro-mes__ver">Tocá para ver el detalle ▾</span></summary>
+        <div class="cm-detalle"><div class="cm-scroll"><table class="fz-tabla cm-tabla">
+          <thead><tr><th>Venta</th><th>Pedido</th><th>Cliente</th><th class="num">Vendido</th><th class="num">Falta cobrar</th></tr></thead>
+          <tbody>${pend.map(x => `<tr><td>${fechaCorta(x.fecha)}</td><td>${escaparRs(x.ref)}</td><td>${escaparRs(x.cliente)}</td><td class="num">${moneda(x.vendido)}</td><td class="num">${moneda(x.pendiente)}</td></tr>`).join("")}</tbody>
+        </table></div></div></details>` : "";
+    cont.innerHTML = tarjetas + pendiente + `<div class="rs-nota" style="margin-top:0">La comisión se paga sobre lo vendido y cobrado: suma lo que pagan los clientes con Oportunidad de Franco Ganada en el CRM, lo cargue quien lo cargue, desde el momento en que se creó la oportunidad (las compras anteriores no suman); las cuentas que le pasaron, desde la fecha acordada; y los pedidos que cargó él. Cada pago del cliente cancela primero lo más viejo que debe; lo pagado en el mostrador cuenta el mismo día. Tramos: hasta $18M 2,5% · hasta $30M 3% · más de $30M 3,5%, sobre todo lo cobrado en el mes.${COMISION_FRANCO.ultimoPago ? ` Último pago registrado en Odoo: ${fechaCorta(COMISION_FRANCO.ultimoPago)}.` : ""}</div>`;
   }
 
 
@@ -2074,6 +2230,7 @@ async function cargar(){
     COMPRAS_INSUMOS = data.comprasInsumos || [];
     LISTAS_PRECIOS = data.listasPrecios || [];
     COBROS_FRANCO = data.cobrosFranco || null;
+    COMISION_FRANCO = data.comisionFranco || null;
 
     document.getElementById("contenido").innerHTML = `
       <div class="pestana activa" id="pestana-mes"></div>
@@ -2209,6 +2366,14 @@ async function cargar(){
           <div id="cobrosFrancoTabla"></div>
           <div class="rs-nota" style="margin-top:10px" id="cobrosFrancoNota"></div>
         </div>
+      </div>
+
+      <div class="pestana" id="pestana-liquidacion">
+        <div class="seccion-titulo">Comisión de Franco: qué se paga</div>
+        <div class="filtros">
+          <div class="filtros__grupo"><label for="fLiqMes">Mes</label><select id="fLiqMes"></select></div>
+        </div>
+        <div id="liqCont"></div>
       </div>
 
       <div class="pestana" id="pestana-compras">
