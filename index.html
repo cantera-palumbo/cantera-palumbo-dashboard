@@ -1677,13 +1677,13 @@ function clientesNuevosFranco(lineasFranco){
   LINEAS.forEach(l => {
     const d = diaLocalRs(l.fecha), c = String(l.cliente || "").trim();
     if(!historiaDesde || d < historiaDesde) historiaDesde = d;
-    if(esAnonimoRs(c)) return;
+    if(esAnonimoRs(c) || Math.abs(l.total) < 0.5) return; // un pedido en $0 no es una compra
     if(!primera[c] || d < primera[c]) primera[c] = d;
   });
   const porCliente = {};
   lineasFranco.forEach(l => {
     const c = String(l.cliente || "").trim();
-    if(esAnonimoRs(c) || primera[c] < INICIO_FRANCO) return;
+    if(esAnonimoRs(c) || !primera[c] || primera[c] < INICIO_FRANCO || Math.abs(l.total) < 0.5) return;
     const x = porCliente[c] = porCliente[c] || { nombre:c, primera:primera[c], fact:0, reparto:{} };
     x.fact += l.total;
     const u = unidadNegocio(l.modalidad); x.reparto[u] = (x.reparto[u] || 0) + l.total;
@@ -1756,7 +1756,31 @@ function prepararLiquidacion(){
 
 function chipsItem(x){
   return (x.enProceso ? ` <span class="rs-chip" title="Parte del cobro figura en proceso en Odoo">en proceso</span>` : "") +
-    (x.cheque ? ` <span class="rs-chip" title="Parte del cobro es con cheques de terceros">cheque</span>` : "");
+    (x.cheque ? ` <span class="rs-chip" title="Parte del cobro es con cheques de terceros">cheque</span>` : "") +
+    (x.duda ? ` <span class="rs-chip" style="background:#f8efd9;color:#6b4e12" title="${escaparRs(x.duda)}">duda</span>` : "");
+}
+
+function diasDesde(fecha){ return Math.max(0, Math.floor((Date.now() - new Date(fecha)) / 86400000)); }
+// Lo pendiente de cobro por antigüedad (días desde la venta), con el promedio ponderado por monto.
+function antiguedadPendienteHtml(pend){
+  const tot = pend.reduce((s,x) => s + x.pendiente, 0);
+  if(!tot) return "";
+  const tramos = [["Hasta 15 días", 0, 15], ["16 a 30 días", 16, 30], ["31 a 60 días", 31, 60], ["Más de 60 días", 61, Infinity]];
+  const prom = Math.round(pend.reduce((s,x) => s + x.pendiente * diasDesde(x.fecha), 0) / tot);
+  return `<div class="kpis" style="margin:4px 0 12px">${tramos.map(([t,a,b]) => { const v = pend.filter(x => { const d = diasDesde(x.fecha); return d >= a && d <= b; }).reduce((s,x) => s + x.pendiente, 0);
+      return `<div class="kpi"><div class="kpi__label">${t}</div><div class="kpi__valor">${monedaCorta(v)}</div><div class="kpi__sub">${Math.round(v / tot * 100)}% de lo pendiente</div></div>`; }).join("")}
+    <div class="kpi"><div class="kpi__label">Antigüedad promedio</div><div class="kpi__valor">${prom} días</div><div class="kpi__sub">desde la venta, ponderado por monto</div></div></div>`;
+}
+
+// Dudas a revisar antes de liquidar (solo jefes): casos que el cálculo no puede resolver solo.
+function dudasHtml(lista){
+  const d = lista.filter(x => x.duda);
+  if(!d.length) return "";
+  return `<div class="panel panel--full" style="border-left:4px solid #c8952b"><h3>Dudas a revisar antes de liquidar</h3>
+    <div class="panel__sub">El cálculo no las puede resolver solo. Confirmar con administración y después tildar, destildar o decidir el ajuste.</div>
+    <div class="fz-scroll"><table class="fz-tabla"><thead><tr><th>Pedido</th><th>Cliente</th><th class="num">Monto</th><th>Qué revisar</th></tr></thead><tbody>${
+      d.map(x => `<tr><td>${escaparRs(x.ref)}</td><td>${escaparRs(x.cliente)}</td><td class="num">${moneda(x.monto)}</td><td>${escaparRs(x.duda)}</td></tr>`).join("")
+    }</tbody></table></div></div>`;
 }
 
 function renderLiquidacion(){
@@ -1772,6 +1796,7 @@ function renderLiquidacion(){
     cont.innerHTML = `<div class="kpis">${kpis("Liquidado", m)}
         ${kpis("Calculado con las reglas", c, `${pctTexto(c.porcentaje)} sobre ${moneda(c.base)} cobrados en el mes`)}
         <div class="kpi"><div class="kpi__label">Diferencia</div><div class="kpi__valor">${monedaCorta(dif)}</div><div class="kpi__sub">${dif > 0 ? "Se pagó más que el cálculo" : (dif < 0 ? "Se pagó menos que el cálculo" : "Coincide")} · incluye ajustes de meses anteriores y lo pagado antes de cobrarse</div></div></div>
+      ${dudasHtml(m.conciliacion ? m.conciliacion.sobrantes.concat(m.conciliacion.faltantes) : [])}
       ${conciliacionHtml(m)}
       <div class="panel panel--full"><h3>Lo que se liquidó</h3>
         <div class="panel__sub">Liquidado${m.liquidadoPor ? " por " + escaparRs(m.liquidadoPor) : ""}${m.fechaLiquidacion ? " el " + fechaCorta(m.fechaLiquidacion) : ""}${m.nota ? " · " + escaparRs(m.nota) : ""}. Lo liquidado de cada pedido no se vuelve a pagar cuando se cobre.</div>
@@ -1786,6 +1811,7 @@ function renderLiquidacion(){
   const fuera = items.filter(x => x.incluido === false);
   cont.innerHTML = `<div class="kpis">${kpis(m.estado === "en curso" ? "A liquidar (hasta hoy)" : "A liquidar", m)}
       <div class="kpi"><div class="kpi__label">Pedidos</div><div class="kpi__valor">${items.length - fuera.length}</div><div class="kpi__sub">${fuera.length ? `${plural(fuera.length, "destildado", "destildados")} por ${moneda(fuera.reduce((s,x) => s + x.monto, 0))}` : "Todos incluidos"}</div></div></div>
+    ${dudasHtml(todos)}
     <div class="panel panel--full"><h3>¿Qué se paga en ${nombreMesRs(m.mes, true)}?</h3>
       <div class="panel__sub">Un renglón por pedido con lo cobrado en el mes. Destildá lo que no se paga: se guarda al instante y Franco deja de verlo. Si un pedido figura "en proceso" o con cheque, decidan si se paga ahora o cuando se acredite.</div>
       <div class="fz-scroll"><table class="fz-tabla"><thead><tr><th>Paga</th><th>Venta</th><th>Pedido</th><th>Cliente</th><th class="num">Vendido</th><th class="num">Cobrado en el mes</th></tr></thead>
@@ -1806,7 +1832,7 @@ function conciliacionHtml(m){
     return `<div class="panel panel--full"><h3>Conciliación</h3><div class="rs-vacio">Lo liquidado coincide con las reglas: no hay nada pagado de más ni de menos.</div></div>`;
   const chipEstado = e => `<span class="rs-chip"${e === "pendiente" ? ' style="background:#f8efd9;color:#6b4e12"' : (e === "no se ajusta" ? ' style="background:var(--crema);color:var(--texto-sec)"' : "")}>${e === "pendiente" ? "sin decidir" : escaparRs(e)}</span>`;
   const tabla = (lista, col) => `<div class="fz-scroll"><table class="fz-tabla"><thead><tr><th>Venta</th><th>Pedido</th><th>Cliente</th><th class="num">${col}</th><th>Estado</th></tr></thead><tbody>${
-    lista.map(x => `<tr><td>${fechaCorta(x.fecha)}</td><td>${escaparRs(x.ref)}</td><td>${escaparRs(x.cliente)}</td><td class="num">${moneda(x.faltaCobrar !== undefined ? x.faltaCobrar : x.monto)}</td><td>${x.estado ? chipEstado(x.estado) : "no se vuelve a pagar"}</td></tr>`).join("")
+    lista.map(x => `<tr><td>${fechaCorta(x.fecha)}</td><td>${escaparRs(x.ref)}</td><td>${escaparRs(x.cliente)}${chipsItem(x)}</td><td class="num">${moneda(x.faltaCobrar !== undefined ? x.faltaCobrar : x.monto)}</td><td>${x.estado ? chipEstado(x.estado) : "no se vuelve a pagar"}</td></tr>`).join("")
   }</tbody></table></div>`;
   const suma = l => l.reduce((s,x) => s + x.monto, 0);
   return `<div class="panel panel--full"><h3>Conciliación: lo pagado contra las reglas</h3>
@@ -1825,7 +1851,7 @@ function ajustesHtml(m, todos){
   return `<h4 style="margin:18px 0 6px">Ajustes de meses anteriores</h4>
     <div class="panel__sub">Vienen de la conciliación de meses ya liquidados. Lo que se suma o descuenta entra en la base de este mes; Franco lo ve como "Ajuste de &lt;mes&gt;", sin el motivo.</div>
     <div class="fz-scroll"><table class="fz-tabla"><thead><tr><th>Pedido</th><th>Cliente</th><th>Motivo</th><th class="num">Ajuste</th><th>Decisión</th></tr></thead><tbody>${
-      ajustes.map(x => { const i = todos.indexOf(x); return `<tr${x.incluido ? "" : ' class="cm-no"'}><td>${escaparRs(x.ref)}</td><td>${escaparRs(x.cliente)}</td><td>${escaparRs(x.motivo)}</td>
+      ajustes.map(x => { const i = todos.indexOf(x); return `<tr${x.incluido ? "" : ' class="cm-no"'}><td>${escaparRs(x.ref)}</td><td>${escaparRs(x.cliente)}${chipsItem(x)}</td><td>${escaparRs(x.motivo)}</td>
         <td class="num">${moneda(x.monto)}</td><td style="white-space:nowrap">${x.incluido
           ? `<b>${x.monto < 0 ? "Se descuenta" : "Se suma"} en este mes</b> · <a href="#" onclick="ajustarItem('${m.mes}', ${i}, 'PENDIENTE'); return false;">deshacer</a>`
           : `<button type="button" class="btn-descarga" onclick="ajustarItem('${m.mes}', ${i}, 'SI')">${x.monto < 0 ? "Descontar" : "Sumar"}</button>
@@ -1930,9 +1956,9 @@ function renderComision(){
         <div class="cobro-mes__titulo">Vendido pendiente de cobro</div>
         <div class="cobro-mes__cuenta"><div class="cobro-mes__total"><span>Te suma cuando el cliente lo pague</span><b>${moneda(totPend)}</b></div></div>
         <span class="cobro-mes__ver">Tocá para ver el detalle ▾</span></summary>
-        <div class="cm-detalle"><div class="cm-scroll"><table class="fz-tabla cm-tabla">
-          <thead><tr><th>Venta</th><th>Pedido</th><th>Cliente</th><th class="num">Vendido</th><th class="num">Falta cobrar</th></tr></thead>
-          <tbody>${pend.map(x => `<tr><td>${fechaCorta(x.fecha)}</td><td>${escaparRs(x.ref)}</td><td>${escaparRs(x.cliente)}</td><td class="num">${moneda(x.vendido)}</td><td class="num">${moneda(x.pendiente)}</td></tr>`).join("")}</tbody>
+        <div class="cm-detalle">${antiguedadPendienteHtml(pend)}<div class="cm-scroll"><table class="fz-tabla cm-tabla">
+          <thead><tr><th>Venta</th><th>Pedido</th><th>Cliente</th><th class="num">Días</th><th class="num">Vendido</th><th class="num">Falta cobrar</th></tr></thead>
+          <tbody>${pend.map(x => `<tr><td>${fechaCorta(x.fecha)}</td><td>${escaparRs(x.ref)}</td><td>${escaparRs(x.cliente)}</td><td class="num">${diasDesde(x.fecha)}</td><td class="num">${moneda(x.vendido)}</td><td class="num">${moneda(x.pendiente)}</td></tr>`).join("")}</tbody>
         </table></div></div></details>` : "";
     cont.innerHTML = tarjetas + pendiente + `<div class="rs-nota" style="margin-top:0">La comisión se paga sobre lo vendido y cobrado: suma lo que pagan los clientes con Oportunidad de Franco Ganada en el CRM, lo cargue quien lo cargue, desde el momento en que se creó la oportunidad (las compras anteriores no suman); las cuentas que le pasaron, desde la fecha acordada; y los pedidos que cargó él. Cada pago del cliente cancela primero lo más viejo que debe; lo pagado en el mostrador cuenta el mismo día. Tramos: hasta $18M 2,5% · hasta $30M 3% · más de $30M 3,5%, sobre todo lo cobrado en el mes.${COMISION_FRANCO.ultimoPago ? ` Último pago registrado en Odoo: ${fechaCorta(COMISION_FRANCO.ultimoPago)}.` : ""}</div>`;
   }
@@ -1987,9 +2013,33 @@ function renderEmbudo(){
         <div class="kpi__sub">Creado el → Fecha de cierre</div></div>
     </div>
     <table class="tabla-vendedores" style="box-shadow:none; border:1px solid var(--linea);">
-      <thead><tr><th>Etapa</th><th style="text-align:right;">Cantidad</th></tr></thead>
-      <tbody>${filasEtapa}</tbody>
-    </table>`;
+      <thead><tr><th>Etapa</th><th style="text-align:right;">Cantidad</th>${EMBUDO.antiguedad ? `<th style="text-align:right;">Días abierta (promedio)</th><th style="text-align:right;">Más de 30 días</th>` : ""}</tr></thead>
+      <tbody>${etapas.map(([et,c]) => { const a = EMBUDO.antiguedad && EMBUDO.antiguedad.porEtapa[et];
+        return `<tr><td>${et}</td><td class="num">${c}</td>${EMBUDO.antiguedad ? `<td class="num">${a ? a.promedio : "—"}</td><td class="num">${a ? a.masDe30 : "—"}</td>` : ""}</tr>`; }).join("")}</tbody>
+    </table>
+    ${EMBUDO.antiguedad && EMBUDO.antiguedad.promedio !== null ? `<div class="rs-nota">Las ${EMBUDO.pendientes} oportunidades en seguimiento llevan en promedio <b>${EMBUDO.antiguedad.promedio} días</b> abiertas; ${EMBUDO.antiguedad.masDe30} pasaron los 30 días.</div>` : ""}
+    ${nuevosPorMesHtml()}`;
+}
+
+// Mes a mes: clientes nuevos que trajo (primera compra) y oportunidades que abrió, con su estado hoy.
+function nuevosPorMesHtml(){
+  const pm = (EMBUDO && EMBUDO.porMes) || {};
+  const nuevos = {};
+  clientesNuevosFranco(LINEAS.filter(l => l.deFranco)).lista.forEach(x => { const m = String(x.primera).slice(0,7); (nuevos[m] = nuevos[m] || { n:0, fact:0 }).n++; nuevos[m].fact += x.fact; });
+  const meses = [...new Set(Object.keys(pm).concat(Object.keys(nuevos)))].filter(m => m >= INICIO_FRANCO.slice(0,7)).sort();
+  if(!meses.length) return "";
+  const max = Math.max(1, ...meses.map(m => Math.max((pm[m]||{}).creadas || 0, (nuevos[m]||{}).n || 0)));
+  const barra = (v, color) => `<div style="display:flex;align-items:center;gap:6px;justify-content:flex-end"><span>${v}</span><span style="display:inline-block;height:10px;width:${Math.round(v/max*90)}px;background:${color};border-radius:2px"></span></div>`;
+  let acN = 0, acO = 0;
+  const filas = meses.map(m => { const o = pm[m] || {}, n = nuevos[m] || { n:0, fact:0 }; acN += n.n; acO += o.creadas || 0;
+    return `<tr><td>${nombreMesRs(m, true)}</td><td class="num">${barra(n.n, "var(--verde)")}</td><td class="num">${moneda(n.fact)}</td>
+      <td class="num">${barra(o.creadas || 0, "#c8952b")}</td><td class="num">${o.contactado || 0}</td><td class="num">${o.presupuesto || 0}</td><td class="num">${o.ganadasCreadas || 0}</td>
+      <td class="num">${o.ganadasCierre || 0}</td><td class="num">${acN} · ${acO}</td></tr>`; }).join("");
+  return `<h4 style="margin:22px 0 6px">Mes a mes: lo nuevo que trajo</h4>
+    <div class="panel__sub">Clientes nuevos: primera compra en la cantera (lo facturado es todo lo que compraron desde entonces). Oportunidades: las que creó ese mes y en qué etapa están hoy. Ganadas en el mes: por fecha de cierre.</div>
+    <div class="fz-scroll"><table class="fz-tabla"><thead><tr><th>Mes</th><th class="num">Clientes nuevos</th><th class="num">Facturado</th><th class="num">Oportunidades creadas</th>
+      <th class="num">Hoy: contactado</th><th class="num">Hoy: propuesta enviada</th><th class="num">Hoy: ganada</th><th class="num">Ganadas en el mes</th><th class="num">Acumulado (clientes · oport.)</th></tr></thead>
+      <tbody>${filas}</tbody></table></div>`;
 }
 
 // ================= ALERTAS =================
@@ -2024,12 +2074,12 @@ function renderAlerta(){
         o.ingresosEsperados ? moneda(o.ingresosEsperados) : "—"]));
   }
 
-  // 2) Ventas de Franco a clientes sin oportunidad en el CRM (ya cuentan para su comisión).
+  // 2) Ventas de Franco a clientes sin oportunidad en el CRM (son de Franco; suman a la comisión al cobrarse).
   if(PEDIDOS_FRANCO_SIN_OPORTUNIDAD.length){
     const total = PEDIDOS_FRANCO_SIN_OPORTUNIDAD.reduce((s,p) => s + p.total, 0), uno = PEDIDOS_FRANCO_SIN_OPORTUNIDAD.length === 1;
     bloque(PEDIDOS_FRANCO_SIN_OPORTUNIDAD.length, "ventas sin oportunidad",
       uno ? "Venta de Franco sin oportunidad en el CRM" : "Ventas de Franco sin oportunidad en el CRM",
-      `Crear la oportunidad en el CRM: desde ese día, todo lo que compre el cliente suma a la comisión de Franco, lo cargue quien lo cargue. ${uno ? "Esta venta" : "Estas ventas"} (${moneda(total)}) ya ${uno ? "suma" : "suman"}.`,
+      `Crear la oportunidad en el CRM: desde ese día, todo lo que compre el cliente suma a la comisión de Franco, lo cargue quien lo cargue. ${uno ? "Esta venta" : "Estas ventas"} (${moneda(total)}) ya ${uno ? "cuenta" : "cuentan"} como de Franco porque ${uno ? "la cargó" : "las cargó"} él, y ${uno ? "suma" : "suman"} a la comisión cuando el cliente ${uno ? "la" : "las"} pague.`,
       ["Cliente", "Pedido", "Fecha", "Monto"],
       PEDIDOS_FRANCO_SIN_OPORTUNIDAD.slice().sort((a,b) => new Date(b.fecha) - new Date(a.fecha))
         .map(p => [escaparRs(p.cliente), escaparRs(p.referencia), fechaCorta(p.fecha), moneda(p.total)]));
